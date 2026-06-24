@@ -70,8 +70,7 @@ function ClassicTabLayout() {
       <Tabs.Screen
         name="index"
         options={{
-          title: "What's first?",
-          headerRight: () => <BypassButton />,
+          headerShown: false,
           tabBarIcon: ({ color }) =>
             isIOS ? (
               <SymbolView name="checklist" tintColor={color} size={22} />

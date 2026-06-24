@@ -1,4 +1,6 @@
 // Main task list screen — grouped by date, filterable, paginated, with Add Task and Detail modals.
+// Safe area is handled manually via ScreenHeader (paddingTop: insets.top + 8).
+// headerShown: false is set in the tab _layout so we own the full screen top-to-bottom.
 import React, { useMemo, useState } from 'react';
 import {
   Platform, Pressable, SectionList, StyleSheet, Text, View,
@@ -8,6 +10,7 @@ import { useColors } from '@/hooks/useColors';
 import { useTasks } from '@/contexts/TasksContext';
 import { useSettings } from '@/contexts/SettingsContext';
 import { Task, FilterOption } from '@/types';
+import { ScreenHeader } from '@/components/ScreenHeader';
 import { FilterBar } from '@/components/FilterBar';
 import { TaskCard } from '@/components/TaskCard';
 import { AddTaskModal } from '@/components/AddTaskModal';
@@ -18,6 +21,17 @@ import { todayISO, withinDays, formatDayLabel } from '@/utils/dateHelpers';
 
 const URGENCY_ORDER = { high: 0, medium: 1, low: 2 };
 const PAGE_SIZE = 10;
+
+// "What's first?" title with the "?" in accent colour
+function HomeTitle() {
+  const c = useColors();
+  return (
+    <Text style={[styles.titleText, { color: c.foreground }]} numberOfLines={1}>
+      {'What\'s first'}
+      <Text style={{ color: c.primary }}>?</Text>
+    </Text>
+  );
+}
 
 export default function TasksScreen() {
   const c = useColors();
@@ -79,18 +93,28 @@ export default function TasksScreen() {
     setPage(1);
   }
 
-  const bottomPad = insets.bottom + (isWeb ? 34 : 0) + 80; // 80 for tab bar + FAB space
-  const topPad = isWeb ? 67 : 0;
+  // Tab bar is ~49pt + bottom inset; FAB floats above it
+  const tabBarHeight = 49 + insets.bottom;
+  const bottomPad = tabBarHeight + 16;
+  const fabBottom = tabBarHeight + 12;
 
   return (
     <View style={[styles.container, { backgroundColor: c.background }]}>
+
+      {/* Safe-area-aware header — clears notch / Dynamic Island on any iPhone */}
+      <ScreenHeader
+        titleNode={<HomeTitle />}
+        rightContent={<BypassButton />}
+      />
+
       {/* Surveillance off banner */}
       {!settings.surveillanceEnabled && (
-        <View style={[styles.banner, { backgroundColor: '#F97316', paddingTop: topPad > 0 ? topPad : undefined }]}>
+        <View style={[styles.banner, { backgroundColor: '#F97316' }]}>
           <Text style={styles.bannerText}>Surveillance off — your apps are not being monitored.</Text>
         </View>
       )}
 
+      {/* Filter bar — below header, never clipped */}
       <FilterBar active={filter} onChange={resetPagination} />
 
       {/* Task count */}
@@ -127,9 +151,9 @@ export default function TasksScreen() {
         showsVerticalScrollIndicator={false}
       />
 
-      {/* FAB */}
+      {/* FAB — floats above tab bar */}
       <Pressable
-        style={[styles.fab, { backgroundColor: c.primary, bottom: insets.bottom + (isWeb ? 34 : 0) + 86 }]}
+        style={[styles.fab, { backgroundColor: c.primary, bottom: fabBottom }]}
         onPress={() => setAddVisible(true)}
       >
         <Text style={styles.fabIcon}>+</Text>
@@ -143,6 +167,7 @@ export default function TasksScreen() {
 
 const styles = StyleSheet.create({
   container: { flex: 1 },
+  titleText: { fontSize: 22, fontFamily: 'Inter_700Bold' },
   banner: { paddingHorizontal: 16, paddingVertical: 10 },
   bannerText: { color: '#fff', fontSize: 13, fontFamily: 'Inter_500Medium', textAlign: 'center' },
   countLabel: { fontSize: 12, fontFamily: 'Inter_400Regular', paddingHorizontal: 16, paddingBottom: 2, paddingTop: 2 },

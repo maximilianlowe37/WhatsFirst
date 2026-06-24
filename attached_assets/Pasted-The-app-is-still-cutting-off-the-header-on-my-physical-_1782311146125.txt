@@ -1,0 +1,241 @@
+The app is still cutting off the header on my physical iPhone — 
+"What's first?", the bypass button, and the filter bar (All, Today, 
+This week, etc.) are all hidden behind the notch/Dynamic Island. 
+The previous safe area fix did not work correctly. 
+
+This is the ONLY thing I want you to fix in this message. 
+Do not change any other feature. Read every file carefully 
+before editing.
+
+---
+
+## ROOT CAUSE TO INVESTIGATE FIRST
+
+Before writing any code, read these files and identify where 
+the home screen header and filter bar are rendered:
+- The main tab navigator file (AppNavigator.js or the 
+  Expo Router _layout.tsx equivalent)
+- HomeScreen.js
+- Any component that renders the "What's first?" title 
+  and the bypass button
+
+The problem is almost certainly ONE of these:
+
+A) The React Navigation header is disabled (headerShown: false) 
+   but the screen is NOT manually applying paddingTop: insets.top 
+   to its own container.
+
+B) The React Navigation header IS enabled but the screen is 
+   also rendering its own custom header below it, causing double 
+   headers and pushing content down.
+
+C) SafeAreaProvider is present in App.js but individual screens 
+   are using a plain <View> as their root instead of respecting 
+   the insets.
+
+Identify which case applies, then apply the fix below.
+
+---
+
+## THE FIX — apply to every screen
+
+For EVERY screen (HomeScreen, HistoryScreen, SettingsScreen, 
+TaskDetailScreen or TaskDetailModal):
+
+Step 1 — Disable React Navigation's built-in header globally.
+In the navigator (AppNavigator.js or _layout.tsx), make sure 
+every screen has:
+  screenOptions={{ headerShown: false }}
+This gives us full control of the header in each screen.
+
+Step 2 — Add a custom safe-area-aware header component.
+Create a new file: src/components/ScreenHeader.js
+
+It must look like this:
+
+import React from 'react';
+import { View, Text, StyleSheet, Platform } from 'react-native';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
+
+// ScreenHeader — a reusable header that always clears the 
+// notch, Dynamic Island, and status bar on any iPhone model.
+export default function ScreenHeader({ title, leftContent, rightContent }) {
+  const insets = useSafeAreaInsets();
+  
+  return (
+    <View style={[
+      styles.container, 
+      { paddingTop: insets.top + 8 }  // safe area + breathing room
+    ]}>
+      <View style={styles.row}>
+        <View style={styles.side}>{leftContent || null}</View>
+        <Text style={styles.title} numberOfLines={1}>{title}</Text>
+        <View style={styles.side}>{rightContent || null}</View>
+      </View>
+    </View>
+  );
+}
+
+const styles = StyleSheet.create({
+  container: {
+    backgroundColor: '#0F0F0F',
+    paddingHorizontal: 16,
+    paddingBottom: 12,
+    borderBottomWidth: 1,
+    borderBottomColor: '#242424',
+  },
+  row: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    minHeight: 44,
+  },
+  title: {
+    fontSize: 18,
+    fontWeight: '700',
+    color: '#FFFFFF',
+    flex: 1,
+    textAlign: 'center',
+  },
+  side: {
+    minWidth: 80,
+    alignItems: 'flex-end',
+  },
+});
+
+Step 3 — Refactor HomeScreen.js to use ScreenHeader.
+The HomeScreen root must be structured EXACTLY like this:
+
+<View style={{ flex: 1, backgroundColor: '#0F0F0F' }}>
+  
+  {/* Header — clears notch/Dynamic Island */}
+  <ScreenHeader
+    title="What's first? ?"   
+    // "?" should be styled in accent color #6366F1 — 
+    // if the title prop doesn't support mixed colors, 
+    // replace the Text inside ScreenHeader with two 
+    // <Text> spans: "What's first" in white and "?" 
+    // in #6366F1
+    rightContent={<BypassButton />}
+  />
+
+  {/* Surveillance off banner — only if surveillance disabled */}
+  {!surveillanceEnabled && (
+    <View style={styles.banner}>
+      <Text style={styles.bannerText}>⚠️ Surveillance is off</Text>
+    </View>
+  )}
+
+  {/* Filter bar — must NOT be inside the header */}
+  <FilterBar ... />
+
+  {/* Task list — takes remaining space */}
+  <SectionList
+    style={{ flex: 1 }}
+    contentContainerStyle={{ paddingBottom: insets.bottom + 80 }}
+    // 80 = tab bar height estimate, prevents list 
+    // content hiding behind the tab bar
+    ...
+  />
+
+  {/* FAB — floating add button */}
+  <TouchableOpacity 
+    style={[styles.fab, { bottom: insets.bottom + 70 }]}
+    // 70 = tab bar height so FAB floats above it
+    ...
+  />
+
+</View>
+
+Do NOT wrap the whole screen in <SafeAreaView> — use the 
+insets manually as shown above. SafeAreaView on older 
+Expo versions applies inconsistent padding.
+
+Step 4 — Apply the same pattern to HistoryScreen.js:
+
+const insets = useSafeAreaInsets();
+
+<View style={{ flex: 1, backgroundColor: '#0F0F0F' }}>
+  <ScreenHeader title="History" />
+  <SectionList
+    contentContainerStyle={{ paddingBottom: insets.bottom + 16 }}
+    ...
+  />
+  {/* Clear history button — pinned to bottom */}
+  <View style={{ paddingBottom: insets.bottom + 16, 
+                 paddingHorizontal: 16 }}>
+    <TouchableOpacity style={styles.clearButton} ...>
+      <Text>Clear History</Text>
+    </TouchableOpacity>
+  </View>
+</View>
+
+Step 5 — Apply the same pattern to SettingsScreen.js:
+
+const insets = useSafeAreaInsets();
+
+<View style={{ flex: 1, backgroundColor: '#0F0F0F' }}>
+  <ScreenHeader title="Settings" />
+  <ScrollView
+    contentContainerStyle={{ 
+      paddingHorizontal: 16, 
+      paddingBottom: insets.bottom + 32 
+    }}
+  >
+    {/* all settings content */}
+  </ScrollView>
+</View>
+
+Step 6 — Fix the bottom tab bar.
+In AppNavigator.js (or _layout.tsx), add this to the 
+Tab.Navigator's tabBarStyle:
+
+tabBarStyle: {
+  backgroundColor: '#1A1A1A',
+  borderTopColor: '#333333',
+  height: 49 + insets.bottom,  // 49 = standard iOS tab bar
+  paddingBottom: insets.bottom,
+  paddingTop: 8,
+}
+
+If the navigator file doesn't have access to insets directly, 
+create a wrapper component that reads insets and passes the 
+height to tabBarStyle.
+
+---
+
+## VALIDATION CHECKLIST
+
+After making the changes, verify mentally that on an 
+iPhone SE (375 × 667 pt, no Dynamic Island, has home 
+button — so insets.bottom ≈ 0, insets.top ≈ 20) AND 
+on iPhone 14 Pro (393 × 852 pt, Dynamic Island, 
+insets.top ≈ 59, insets.bottom ≈ 34):
+
+□ "What's first?" title is fully visible below the 
+  status bar / Dynamic Island
+□ Bypass button ("X left") is fully visible on the right
+□ Surveillance banner (if shown) appears below the header
+□ Filter bar (All, Today, This Week...) is fully visible 
+  below the header, not clipped
+□ Task list items are not hidden behind the tab bar 
+  at the bottom
+□ FAB (+ button) floats above the tab bar, not behind it
+□ History screen title and Clear button are both visible
+□ Settings screen title and all sliders/buttons are 
+  reachable by scrolling
+
+If any of these fail, fix them before finishing.
+
+---
+
+## CONSTRAINTS
+- Only change layout and safe area code. 
+  Do not touch task logic, AsyncStorage, 
+  notifications, bypass logic, or settings values.
+- Do not install any new packages for this fix.
+- Do not use SafeAreaView — use useSafeAreaInsets 
+  with manual paddingTop/paddingBottom as shown.
+- Make sure SafeAreaProvider wraps the entire app 
+  in App.js (it should already be there — confirm 
+  it and leave it alone if correct).
