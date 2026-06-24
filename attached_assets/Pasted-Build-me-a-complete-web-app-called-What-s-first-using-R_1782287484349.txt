@@ -1,0 +1,248 @@
+Build me a complete web app called "What's first?" using React + Vite. 
+Use plain CSS modules or Tailwind CSS for styling (whichever you 
+scaffold by default). Use localStorage for all data persistence — 
+no backend, no database, no external API.
+
+This is a personal anti-procrastination task manager. The full concept:
+the app will eventually block distracting apps (TikTok, Instagram, etc.)
+on iOS until the user completes their priority tasks. For now, build the
+complete UI and logic layer. The blocking integration is iOS-only and 
+comes later.
+
+---
+
+## FILE STRUCTURE
+Organize the project like this:
+src/
+  components/
+    TaskCard.jsx
+    TaskList.jsx
+    SubtaskList.jsx
+    FilterBar.jsx
+    BypassButton.jsx
+    SettingsPanel.jsx
+    HistoryView.jsx
+    TaskDetailModal.jsx
+    EmptyState.jsx
+  hooks/
+    useTasks.js
+    useBypass.js
+    useSettings.js
+  utils/
+    urgencyColor.js
+    dateHelpers.js
+    storage.js
+  App.jsx
+  main.jsx
+
+---
+
+## DATA MODELS (localStorage keys)
+
+**tasks** — array of task objects:
+{
+  id: string (uuid),
+  title: string,
+  status: "active" | "completed" | "cancelled",
+  urgency: "low" | "medium" | "high",
+  dueDate: ISO date string (default = today),
+  createdAt: ISO date string,
+  completedAt: ISO date string | null,
+  subtasks: [{ id: string, title: string, isCompleted: boolean }]
+}
+
+**bypass** — object:
+{
+  usedThisMonth: number (0, 1, or 2),
+  month: number (0–11, JS month index)
+}
+
+**settings** — object:
+{
+  surveillanceEnabled: boolean (default true),
+  firstInterruptMinutes: number (default 15, range 5–60),
+  graceMinutes: number (default 5, range 2–15),
+  blockedApps: [{ id: string, name: string }]
+    (default: [
+      { id: "tiktok", name: "TikTok" },
+      { id: "instagram", name: "Instagram" },
+      { id: "youtube", name: "YouTube" }
+    ])
+}
+
+Write a storage.js utility that wraps localStorage get/set with 
+JSON parse/stringify and handles missing keys with default values.
+
+---
+
+## FEATURES TO BUILD
+
+### 1. APP SHELL
+- Top navigation bar with the app name "What's first?" on the left 
+  (stylized — the "?" should be a distinct accent color).
+- Icons on the right: ⚙️ Settings, 🕐 History.
+- A discrete banner below the nav when surveillanceEnabled is false: 
+  "Surveillance off — your apps are not being monitored."
+- Bottom tab bar (mobile-first layout, max-width 430px centered): 
+  [Today] [All Tasks] [History] [Settings].
+
+### 2. TASK LIST (main view)
+- Tasks grouped by dueDate into day sections: 
+  "Today", "Tomorrow", "Wed 25 Jun", etc.
+- Within each day, tasks sorted by urgency (high → medium → low).
+- Each TaskCard shows:
+  - A left color strip based on urgencyColor(task) logic (see #7).
+  - Task title.
+  - Urgency badge (🔴 High / 🟠 Medium / 🟢 Low).
+  - Due date chip if not today.
+  - Sub-task progress bar if subtasks.length > 0: 
+    "2 / 4 subtasks" with a thin progress bar.
+  - A chevron ▾ to expand subtasks inline.
+  - Action buttons: ✓ Done | ✕ Cancel | ··· Detail.
+- "Done" button is disabled (greyed out, with tooltip 
+  "Complete all subtasks first") if the task has subtasks 
+  and not all are completed.
+- Cancelled and completed tasks are immediately moved to history.
+
+### 3. DRAG AND DROP BETWEEN DAY GROUPS
+- Implement drag and drop using the HTML5 Drag and Drop API 
+  (no external library).
+- Long-press on mobile (touch events) + drag gesture to move a 
+  TaskCard to a different day section, updating its dueDate.
+- While dragging, highlight the target day section with a dashed 
+  border to indicate a valid drop zone.
+- As a fallback for mobile, add a long-press context menu 
+  (appears after 500ms hold) with options: 
+  "Move to Tomorrow", "Move to in 2 days", "Pick a date" 
+  (opens a native date input).
+
+### 4. ADD TASK FLOW
+- Floating "+" button (bottom right, above tab bar).
+- Opens a bottom sheet / modal with fields:
+  - Title (required, text input, autofocused).
+  - Urgency selector: three pills [🟢 Low] [🟠 Medium] [🔴 High], 
+    default Medium.
+  - Due date: date picker, default today.
+  - "Add subtasks" toggle — reveals a text input to add subtask 
+    titles one by one (press Enter or + to add each one).
+- "Add task" button creates the task and closes the sheet.
+
+### 5. TASK DETAIL MODAL
+- Opens when user taps ··· on a task card.
+- Shows all task info (editable: title, urgency, dueDate).
+- Full subtask list with checkboxes to complete individual subtasks.
+- "Add a subtask" input at the bottom of the subtask list.
+- "Save changes" button.
+- "Delete task permanently" button (red, with confirmation dialog).
+
+### 6. HISTORY VIEW
+- Accessible from tab bar or ⌚ icon.
+- Two sections: "Completed ✓" and "Cancelled ✕".
+- Each entry shows: task title, original urgency strip, 
+  date completed/cancelled, number of subtasks if any.
+- A "Clear history" button at the top (with confirmation).
+- Read-only — no actions on history items.
+
+### 7. FILTERS AND PAGINATION
+- FilterBar below the nav (above task groups) with pill buttons:
+  [All] [Today] [This Week] [Urgent] [Has Subtasks]
+- "All" shows all active tasks grouped by day.
+- "Today" filters to tasks with dueDate = today only.
+- "This Week" filters to tasks due within the next 7 days.
+- "Urgent" filters to tasks with urgency = "high".
+- "Has Subtasks" filters to tasks with subtasks.length > 0.
+- Show max 10 tasks per page. Below the list, if there are more, 
+  show a "Load more" button (not infinite scroll — explicit click).
+- Show a task count: "Showing 10 of 23 tasks".
+
+### 8. URGENCY COLOR LOGIC
+Create a centralized urgencyColor(task) function in 
+utils/urgencyColor.js that returns a CSS color value:
+- RED (#EF4444): urgency is "high" AND dueDate is within 24 hours.
+- ORANGE (#F97316): urgency is "medium" OR dueDate is within 48h 
+  (but not red criteria).
+- GREEN (#22C55E): urgency is "low" AND dueDate is more than 48h away.
+- GREY (#9CA3AF): task has no dueDate or dueDate is past 
+  (overdue without being urgent).
+Add a special "OVERDUE" badge (🚨) on any task whose dueDate is 
+strictly before today.
+
+### 9. BYPASS SYSTEM ("Free Pass")
+- A lock icon button 🔓 in the top nav or on the main screen.
+- On click, show a confirmation dialog: 
+  "You're about to use a Free Pass (X of 2 remaining this month). 
+   This temporarily disables app surveillance. Continue?"
+- On confirm, decrement the counter, store the new value, 
+  and show a success toast: "Free Pass activated. Enjoy your break!"
+- On mount (and when the app becomes visible), check if the stored 
+  month differs from the current month. If so, reset usedThisMonth 
+  to 0 and update the stored month.
+- If usedThisMonth >= 2: the button is visually disabled (grey, 
+  lock icon 🔒), and hovering/tapping shows a tooltip: 
+  "No Free Passes left this month."
+- Display the remaining count near the button: "2 passes left".
+
+### 10. SETTINGS PANEL
+Accessible from ⚙️ icon or Settings tab. Sections:
+
+**Surveillance**
+- Toggle: "Enable surveillance" (surveillanceEnabled). 
+  When toggled off, show confirmation: "This will stop all app 
+  monitoring until you turn it back on."
+
+**First interrupt**
+- Slider: "First alert after X minutes" (range 5–60, step 5, 
+  default 15). Show current value next to the label.
+
+**Grace period**
+- Slider: "Grace period between alerts: X minutes" 
+  (range 2–15, step 1, default 5).
+
+**Apps to monitor**
+- List of blockedApps as chips: each chip shows the app name 
+  with a ✕ button to remove it.
+- "Add app" button — opens a small input to type an app name 
+  and add it to the list (placeholder functionality; real 
+  FamilyActivityPicker integration is iOS-only and comes later).
+- An info banner: "ℹ️ App blocking requires the iOS version of 
+  this app. This settings screen lets you configure which apps 
+  to block in advance."
+- Default apps shown: TikTok, Instagram, YouTube.
+
+---
+
+## DESIGN REQUIREMENTS
+- Mobile-first layout. Max container width 430px, centered on desktop.
+- Dark mode by default (background #0F0F0F, cards #1A1A1A, 
+  surface #242424).
+- Accent color: #6366F1 (indigo) for buttons, active states, 
+  the "?" in the logo.
+- Font: system-ui or Inter if available via Google Fonts.
+- Smooth transitions on task add/remove (fade + slide).
+- Empty state when no tasks match the current filter: 
+  show an illustration placeholder and the message 
+  "Nothing here — What's first? 🎯".
+- All interactions should feel snappy — no unnecessary loading states 
+  for localStorage operations.
+
+---
+
+## CONSTRAINTS
+- No backend, no authentication, no external API calls.
+- All state lives in localStorage, loaded on mount via the 
+  storage.js utility.
+- Use React hooks only (useState, useEffect, useRef, useCallback). 
+  No Redux, no Zustand.
+- No React Router — handle "navigation" with a single 
+  activeView state in App.jsx.
+- uuid generation: use crypto.randomUUID() (available in all 
+  modern browsers).
+- Do not use any UI component library (no MUI, no Chakra, 
+  no shadcn) — write all components from scratch so the code 
+  stays transparent and learnable.
+- Write clean, commented code. Each file should have a brief 
+  comment at the top explaining what it does.
+
+Build the complete app in one go. Do not stop at a partial 
+implementation — every feature listed above must be present 
+and functional.

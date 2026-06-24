@@ -1,0 +1,27 @@
+kind = "mobile"
+previewPath = "/"
+title = "What's first?"
+version = "1.0.0"
+id = "artifacts/whats-first"
+router = "expo-domain"
+
+[[integratedSkills]]
+name = "expo"
+version = "1.0.0"
+
+[[services]]
+ensurePreviewReachable = "/status"
+name = "expo"
+paths = [ "/" ]
+localPort = 18405
+
+[services.development]
+run = "pnpm --filter @workspace/whats-first run dev"
+
+[services.production]
+build = [ "pnpm", "--filter", "@workspace/whats-first", "run", "build" ]
+run = [ "pnpm", "--filter", "@workspace/whats-first", "run", "serve" ]
+
+[services.env]
+PORT = "18405"
+BASE_PATH = "/"
