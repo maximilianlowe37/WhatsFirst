@@ -20,6 +20,10 @@ const DEFAULT_SETTINGS: AppSettings = {
   maxBypassPerMonth: 2,
   maxSurveillanceDisablesPerMonth: 3,
   notificationsEnabled: true,
+  // Focus mode defaults — see utils/focusNag.ts
+  focusNagMinutes: 20,
+  focusNagMessage: 'motivational',
+  lowNagLimit: 0,
 };
 
 const DEFAULT_SURV_USAGE: SurveillanceUsage = {

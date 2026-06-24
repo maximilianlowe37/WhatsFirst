@@ -5,14 +5,30 @@ import { Task } from '@/types';
 import { setItem, STORAGE_KEYS } from '@/utils/storage';
 
 // Configure how incoming notifications are displayed while app is foregrounded.
+//
+// The default handler pings and shows a banner for everything. That's the
+// right behavior for per-task reminders ("don't forget X is due today"), but
+// the focus nag is a silent reminder — it should land in the tray quietly so
+// the user isn't startled every 20 minutes.
+//
+// We disambiguate by inspecting the notification data: focus nag has
+// `{ kind: 'focus_nag' }` and per-task reminders have `{ taskId }`. Both are
+// stored by their producers — see scheduleTaskReminder and startFocusNag.
 Notifications.setNotificationHandler({
-  handleNotification: async () => ({
-    shouldShowAlert: true,
-    shouldPlaySound: true,
-    shouldSetBadge: false,
-    shouldShowBanner: true,
-    shouldShowList: true,
-  }),
+  handleNotification: async (notification) => {
+    const data = (notification.request.content.data ?? {}) as {
+      kind?: string;
+      taskId?: string;
+    };
+    const isFocusNag = data.kind === 'focus_nag';
+    return {
+      shouldShowAlert: !isFocusNag,
+      shouldPlaySound: !isFocusNag,
+      shouldSetBadge: false,
+      shouldShowBanner: !isFocusNag,
+      shouldShowList: !isFocusNag,
+    };
+  },
 });
 
 export async function registerForPushNotifications(): Promise<string | null> {

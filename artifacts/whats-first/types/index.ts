@@ -34,7 +34,15 @@ export interface SurveillanceUsage {
 export interface BlockedApp {
   id: string;
   name: string;
+  /**
+   * iOS bundle identifier returned by the FamilyControls FamilyActivityPicker.
+   * Used by the native `expo-family-controls` module to shield the app.
+   * Null/undefined on Android/web — those platforms use this only for display.
+   */
+  bundleId?: string | null;
 }
+
+export type FocusMessageStyle = 'motivational' | 'minimal' | 'custom';
 
 export interface AppSettings {
   surveillanceEnabled: boolean;
@@ -44,6 +52,10 @@ export interface AppSettings {
   maxBypassPerMonth: number;
   maxSurveillanceDisablesPerMonth: number;
   notificationsEnabled: boolean;
+  // Focus mode enforcement (Path A — works today through Replit QR)
+  focusNagMinutes: number;
+  focusNagMessage: FocusMessageStyle;
+  lowNagLimit: number;
 }
 
 export type FilterOption = 'all' | 'today' | 'week' | 'urgent' | 'subtasks';

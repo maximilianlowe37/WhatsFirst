@@ -17,6 +17,7 @@ import { AddTaskModal } from '@/components/AddTaskModal';
 import { TaskDetailModal } from '@/components/TaskDetailModal';
 import { EmptyState } from '@/components/EmptyState';
 import { BypassButton } from '@/components/BypassButton';
+import { FocusStatusPill } from '@/components/FocusStatusPill';
 import { todayISO, withinDays, formatDayLabel } from '@/utils/dateHelpers';
 
 const URGENCY_ORDER = { high: 0, medium: 1, low: 2 };
@@ -106,6 +107,9 @@ export default function TasksScreen() {
         titleNode={<HomeTitle />}
         rightContent={<BypassButton />}
       />
+
+      {/* Focus mode status — auto-hides when surveillance is off */}
+      <FocusStatusPill />
 
       {/* Surveillance off banner */}
       {!settings.surveillanceEnabled && (

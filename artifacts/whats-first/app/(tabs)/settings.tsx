@@ -5,7 +5,9 @@
 // FIX 6a: ScrollView with bottom padding, 44×44 step buttons.
 // FIX 6b: App picker via ActionSheetIOS (iOS) or Modal (Android/web).
 // FIX 8: notificationsEnabled toggle.
-import React, { useState } from 'react';
+// PATH A: new "Focus reminders" section + status pill wiring.
+// PATH C: new "Native app blocking" section (iOS only) showing live entitlement state.
+import React, { useEffect, useState } from 'react';
 import {
   ActionSheetIOS, Alert, FlatList, Modal, Platform, Pressable,
   ScrollView, StyleSheet, Switch, Text, View,
@@ -16,14 +18,22 @@ import * as Haptics from 'expo-haptics';
 import { useColors } from '@/hooks/useColors';
 import { useSettings } from '@/contexts/SettingsContext';
 import { cancelAllReminders } from '@/utils/notifications';
+import {
+  MAX_NAG_MINUTES,
+  MIN_NAG_MINUTES,
+} from '@/utils/focusNag';
+import {
+  getNativeBlockState,
+  setupNativeBlocking,
+  NativeBlockState,
+} from '@/utils/familyControls';
+import { FocusMessageStyle } from '@/types';
 
 const POPULAR_APPS = [
   'TikTok', 'Instagram', 'YouTube', 'Facebook', 'Twitter/X', 'Snapchat',
   'Reddit', 'Twitch', 'Netflix', 'BeReal', 'LinkedIn', 'Pinterest',
   'Spotify', 'Discord', 'WhatsApp',
 ];
-
-// ─── Sub-components ───────────────────────────────────────────────────────────
 
 function SectionCard({ title, children }: { title: string; children: React.ReactNode }) {
   const c = useColors();
@@ -55,7 +65,6 @@ function ToggleRow({ label, subtitle, value, onValueChange }: {
   );
 }
 
-// FIX 6a: Slider-style row with 44×44 step buttons.
 function StepRow({ label, value, min, max, step, unit = 'min', onChange }: {
   label: string; value: number; min: number; max: number; step: number; unit?: string;
   onChange: (v: number) => void;
@@ -74,7 +83,6 @@ function StepRow({ label, value, min, max, step, unit = 'min', onChange }: {
         <Text style={[styles.stepValueText, { color: c.primary }]}>{value} {unit}</Text>
       </View>
       <View style={styles.stepControls}>
-        {/* FIX 6a: 44×44 minimum touch target */}
         <Pressable
           style={[styles.stepBtn, { backgroundColor: c.surface, borderColor: c.border }]}
           onPress={decrement}
@@ -97,7 +105,6 @@ function StepRow({ label, value, min, max, step, unit = 'min', onChange }: {
   );
 }
 
-// FIX 3/5: Counter row with [−] bold-number [+] UI.
 function CounterRow({ label, subtitle, value, min, max, onChange }: {
   label: string; subtitle?: string; value: number; min: number; max: number;
   onChange: (v: number) => void;
@@ -128,7 +135,48 @@ function CounterRow({ label, subtitle, value, min, max, onChange }: {
   );
 }
 
-// ─── Main screen ──────────────────────────────────────────────────────────────
+function MessageStyleRow({ value, onChange }: {
+  value: FocusMessageStyle; onChange: (v: FocusMessageStyle) => void;
+}) {
+  const c = useColors();
+  const OPTIONS: { key: FocusMessageStyle; label: string }[] = [
+    { key: 'motivational', label: 'Motivational' },
+    { key: 'minimal', label: 'Minimal' },
+    { key: 'custom', label: 'Direct' },
+  ];
+  return (
+    <View style={[styles.toggleRow, { borderTopColor: c.border, flexDirection: 'column', alignItems: 'stretch', gap: 10 }]}>
+      <Text style={[styles.rowLabel, { color: c.foreground }]}>Nag style</Text>
+      <View style={{ flexDirection: 'row', gap: 6 }}>
+        {OPTIONS.map((opt) => {
+          const active = opt.key === value;
+          return (
+            <Pressable
+              key={opt.key}
+              style={[
+                styles.segment,
+                {
+                  backgroundColor: active ? c.primary : 'transparent',
+                  borderColor: active ? c.primary : c.border,
+                },
+              ]}
+              onPress={() => onChange(opt.key)}
+            >
+              <Text
+                style={[
+                  styles.segmentText,
+                  { color: active ? '#fff' : c.mutedForeground },
+                ]}
+              >
+                {opt.label}
+              </Text>
+            </Pressable>
+          );
+        })}
+      </View>
+    </View>
+  );
+}
 
 export default function SettingsScreen() {
   const c = useColors();
@@ -143,7 +191,6 @@ export default function SettingsScreen() {
   const topPad = insets.top + (isWeb ? 67 : 0);
   const bottomPad = insets.bottom + (isWeb ? 34 : 0) + 20;
 
-  // FIX 6b: Android/web app picker modal state
   const [appPickerVisible, setAppPickerVisible] = useState(false);
 
   function getAvailableApps() {
@@ -151,7 +198,6 @@ export default function SettingsScreen() {
     return POPULAR_APPS.filter((a) => !blockedNames.includes(a.toLowerCase()));
   }
 
-  // FIX 6b: App picker — ActionSheetIOS on iOS, Modal on Android/web
   function showAppPicker() {
     const available = getAvailableApps();
     if (available.length === 0) {
@@ -168,7 +214,6 @@ export default function SettingsScreen() {
     }
   }
 
-  // FIX 5: Surveillance toggle with disable-limit enforcement
   function handleSurveillanceToggle(val: boolean) {
     if (!val) {
       if (!canDisableSurveillance) {
@@ -199,10 +244,45 @@ export default function SettingsScreen() {
     }
   }
 
-  // FIX 8: Notifications toggle
   function handleNotificationsToggle(val: boolean) {
     updateSettings({ notificationsEnabled: val });
     if (!val) cancelAllReminders();
+  }
+
+  const [nativeState, setNativeState] = useState<NativeBlockState>({
+    available: false,
+    authorized: false,
+    status: 'notDetermined',
+    blockedCount: 0,
+  });
+  const [setupInProgress, setSetupInProgress] = useState(false);
+
+  useEffect(() => {
+    if (!isIOS) return;
+    getNativeBlockState().then(setNativeState).catch(() => {});
+  }, [isIOS]);
+
+  async function handleNativeSetup() {
+    if (setupInProgress) return;
+    setSetupInProgress(true);
+    Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
+    const result = await setupNativeBlocking({
+      title: "What's first?",
+      subtitle: 'Complete a task to lift this shield.',
+      primaryButtonLabel: "What's first?",
+      secondaryButtonLabel: 'Dismiss',
+    });
+    setSetupInProgress(false);
+    if (result === null) {
+      Alert.alert(
+        'Not available',
+        'Native app blocking requires the iOS dev build with the Family Controls entitlement. See FAMILY_CONTROLS_SETUP.md for setup instructions.',
+      );
+      return;
+    }
+    Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
+    const fresh = await getNativeBlockState();
+    setNativeState(fresh);
   }
 
   const availableApps = getAvailableApps();
@@ -216,7 +296,6 @@ export default function SettingsScreen() {
       >
         <Text style={[styles.screenTitle, { color: c.foreground }]}>Settings</Text>
 
-        {/* Surveillance */}
         <SectionCard title="Surveillance">
           <ToggleRow
             label="Enable surveillance"
@@ -224,7 +303,6 @@ export default function SettingsScreen() {
             value={settings.surveillanceEnabled}
             onValueChange={handleSurveillanceToggle}
           />
-          {/* FIX 5: Configurable disable limit */}
           <CounterRow
             label="Max disables per month"
             subtitle="How many times surveillance can be turned off"
@@ -234,9 +312,7 @@ export default function SettingsScreen() {
           />
         </SectionCard>
 
-        {/* Free Passes */}
         <SectionCard title="Free Passes">
-          {/* FIX 3: Configurable bypass limit */}
           <CounterRow
             label="Free Passes per month"
             subtitle="How many surveillance bypasses you allow yourself"
@@ -246,7 +322,27 @@ export default function SettingsScreen() {
           />
         </SectionCard>
 
-        {/* Interrupts */}
+        <SectionCard title="Focus reminders">
+          <CounterRow
+            label="Nag every"
+            subtitle="How often to ping you while tasks are due"
+            value={settings.focusNagMinutes}
+            min={MIN_NAG_MINUTES} max={MAX_NAG_MINUTES}
+            onChange={(v) => updateSettings({ focusNagMinutes: v })}
+          />
+          <CounterRow
+            label="Skip if fewer than"
+            subtitle="Tasks due today below this count = no nag"
+            value={settings.lowNagLimit}
+            min={0} max={10}
+            onChange={(v) => updateSettings({ lowNagLimit: v })}
+          />
+          <MessageStyleRow
+            value={settings.focusNagMessage}
+            onChange={(v) => updateSettings({ focusNagMessage: v })}
+          />
+        </SectionCard>
+
         <SectionCard title="Interrupt timing">
           <StepRow
             label="First alert after"
@@ -262,7 +358,6 @@ export default function SettingsScreen() {
           />
         </SectionCard>
 
-        {/* Notifications (FIX 8) */}
         <SectionCard title="Notifications">
           <ToggleRow
             label="Task reminders"
@@ -272,12 +367,67 @@ export default function SettingsScreen() {
           />
         </SectionCard>
 
-        {/* Blocked apps */}
+        {isIOS && (
+          <SectionCard title="Native app blocking">
+            <View style={[styles.toggleRow, { borderTopWidth: 0 }]}>
+              <View style={{ flex: 1, gap: 2 }}>
+                <Text style={[styles.rowLabel, { color: c.foreground }]}>
+                  iOS Screen Time shields
+                </Text>
+                <Text style={[styles.rowSub, { color: c.mutedForeground }]}>
+                  {nativeState.available
+                    ? nativeState.authorized
+                      ? `Active — blocking ${nativeState.blockedCount} app${nativeState.blockedCount !== 1 ? 's' : ''}`
+                      : nativeState.status === 'denied'
+                        ? 'Permission denied. Enable in iOS Settings.'
+                        : 'Not yet authorized'
+                    : nativeState.reason === 'unsupported'
+                      ? 'Requires iOS 15+ on a real device'
+                      : 'Requires the iOS dev build with the Family Controls entitlement'}
+                </Text>
+              </View>
+              <View
+                style={[
+                  styles.statusDot,
+                  {
+                    backgroundColor: nativeState.authorized
+                      ? '#22C55E'
+                      : nativeState.available
+                        ? '#F97316'
+                        : c.mutedForeground,
+                  },
+                ]}
+              />
+            </View>
+
+            <Pressable
+              style={[
+                styles.addAppToggle,
+                {
+                  borderColor: nativeState.available ? c.primary : c.border,
+                  opacity: nativeState.available && !setupInProgress ? 1 : 0.5,
+                },
+              ]}
+              onPress={handleNativeSetup}
+              disabled={!nativeState.available || setupInProgress}
+            >
+              <Feather name="shield" size={14} color={c.primary} />
+              <Text style={[styles.addAppToggleText, { color: c.primary }]}>
+                {setupInProgress
+                  ? 'Setting up…'
+                  : nativeState.authorized
+                    ? 'Change blocked apps'
+                    : 'Set up app blocking'}
+              </Text>
+            </Pressable>
+          </SectionCard>
+        )}
+
         <SectionCard title="Apps to monitor">
           <View style={[styles.infoBanner, { backgroundColor: '#6366F111', borderColor: '#6366F133' }]}>
             <Feather name="info" size={14} color={c.primary} />
             <Text style={[styles.infoText, { color: c.mutedForeground }]}>
-              App blocking requires the iOS version of this app. Configure which apps to block here in advance.
+              Your planned blocked-app list. On iOS, the native section above applies the actual shield. On Android/web these are tracked for reference only — focus reminders are the active enforcement.
             </Text>
           </View>
 
@@ -292,7 +442,6 @@ export default function SettingsScreen() {
             ))}
           </View>
 
-          {/* FIX 6b: App picker button */}
           <Pressable
             style={[styles.addAppToggle, { borderColor: c.border }]}
             onPress={showAppPicker}
@@ -303,7 +452,6 @@ export default function SettingsScreen() {
         </SectionCard>
       </ScrollView>
 
-      {/* FIX 6b: Android/web app picker modal */}
       <Modal
         visible={appPickerVisible}
         transparent
@@ -360,26 +508,30 @@ const styles = StyleSheet.create({
   },
   rowLabel: { fontSize: 15, fontFamily: 'Inter_400Regular' },
   rowSub: { fontSize: 12, fontFamily: 'Inter_400Regular' },
-  // FIX 6a: Step row for sliders — 44×44 buttons
   stepRowContainer: { paddingHorizontal: 16, paddingVertical: 14, borderTopWidth: 1 },
   stepLabelRow: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 12 },
   stepValueText: { fontSize: 15, fontFamily: 'Inter_700Bold' },
   stepControls: { flexDirection: 'row', alignItems: 'center', gap: 10 },
-  // FIX 6a: 44×44 minimum touch target
   stepBtn: {
     width: 44, height: 44, borderRadius: 10, borderWidth: 1,
     alignItems: 'center', justifyContent: 'center',
   },
   track: { flex: 1, height: 6, borderRadius: 3, overflow: 'hidden' },
   fill: { height: 6, borderRadius: 3 },
-  // FIX 3/5: Counter row
   counterControls: { flexDirection: 'row', alignItems: 'center', gap: 12 },
   counterBtn: {
     width: 44, height: 44, borderRadius: 10, borderWidth: 1,
     alignItems: 'center', justifyContent: 'center',
   },
   counterValue: { fontSize: 22, fontFamily: 'Inter_700Bold', minWidth: 30, textAlign: 'center' },
-  // Blocked apps
+  statusDot: {
+    width: 12, height: 12, borderRadius: 6,
+  },
+  segment: {
+    flex: 1, paddingVertical: 9, borderRadius: 10,
+    alignItems: 'center', borderWidth: 1.5,
+  },
+  segmentText: { fontSize: 12, fontFamily: 'Inter_600SemiBold' },
   infoBanner: {
     margin: 12, marginBottom: 8, borderRadius: 10, borderWidth: 1,
     padding: 12, flexDirection: 'row', gap: 8, alignItems: 'flex-start',
@@ -397,7 +549,6 @@ const styles = StyleSheet.create({
     borderRadius: 10, borderWidth: 1.5, borderStyle: 'dashed', justifyContent: 'center',
   },
   addAppToggleText: { fontSize: 14, fontFamily: 'Inter_500Medium' },
-  // FIX 6b: App picker modal
   pickerOverlay: { flex: 1, justifyContent: 'flex-end', backgroundColor: 'rgba(0,0,0,0.6)' },
   pickerSheet: {
     borderTopLeftRadius: 24, borderTopRightRadius: 24,
