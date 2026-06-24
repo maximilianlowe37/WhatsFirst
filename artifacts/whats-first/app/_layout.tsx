@@ -1,4 +1,6 @@
-// Root layout — wires up all context providers and font loading.
+// Root layout — wires up all context providers, font loading, and push notifications.
+// FIX 8: Registers for push notifications on startup and listens for notification responses.
+// Provider order: Settings → Bypass → Tasks (both Bypass and Tasks read from SettingsContext).
 import {
   Inter_400Regular,
   Inter_500Medium,
@@ -7,6 +9,7 @@ import {
   useFonts,
 } from "@expo-google-fonts/inter";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
+import * as Notifications from "expo-notifications";
 import { Stack } from "expo-router";
 import * as SplashScreen from "expo-splash-screen";
 import React, { useEffect } from "react";
@@ -15,15 +18,36 @@ import { KeyboardProvider } from "react-native-keyboard-controller";
 import { SafeAreaProvider } from "react-native-safe-area-context";
 
 import { ErrorBoundary } from "@/components/ErrorBoundary";
-import { TasksProvider } from "@/contexts/TasksContext";
 import { SettingsProvider } from "@/contexts/SettingsContext";
 import { BypassProvider } from "@/contexts/BypassContext";
+import { TasksProvider } from "@/contexts/TasksContext";
+import { registerForPushNotifications } from "@/utils/notifications";
 
 SplashScreen.preventAutoHideAsync();
 
 const queryClient = new QueryClient();
 
 function RootLayoutNav() {
+  // FIX 8: Register for push notifications once on mount
+  useEffect(() => {
+    registerForPushNotifications().catch(() => {});
+  }, []);
+
+  // FIX 8: Listen for notification taps — extract taskId from notification data
+  useEffect(() => {
+    const subscription = Notifications.addNotificationResponseReceivedListener(
+      (response) => {
+        const taskId = response.notification.request.content.data?.taskId as string | undefined;
+        if (taskId) {
+          // Task detail navigation can be wired here when needed.
+          // The taskId is available for deep linking.
+          console.log("[Notifications] User tapped notification for task:", taskId);
+        }
+      }
+    );
+    return () => subscription.remove();
+  }, []);
+
   return (
     <Stack screenOptions={{ headerBackTitle: "Back" }}>
       <Stack.Screen name="(tabs)" options={{ headerShown: false }} />
@@ -51,17 +75,18 @@ export default function RootLayout() {
     <SafeAreaProvider>
       <ErrorBoundary>
         <QueryClientProvider client={queryClient}>
-          <TasksProvider>
-            <SettingsProvider>
-              <BypassProvider>
+          {/* SettingsProvider must be outermost so Bypass + Tasks can read settings */}
+          <SettingsProvider>
+            <BypassProvider>
+              <TasksProvider>
                 <GestureHandlerRootView>
                   <KeyboardProvider>
                     <RootLayoutNav />
                   </KeyboardProvider>
                 </GestureHandlerRootView>
-              </BypassProvider>
-            </SettingsProvider>
-          </TasksProvider>
+              </TasksProvider>
+            </BypassProvider>
+          </SettingsProvider>
         </QueryClientProvider>
       </ErrorBoundary>
     </SafeAreaProvider>

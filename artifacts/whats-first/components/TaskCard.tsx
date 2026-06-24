@@ -1,8 +1,7 @@
 // TaskCard — displays a task with urgency strip, subtasks, actions, and long-press move menu.
+// FIX 2: Chevron and progress bar only render when subtasks exist.
 import React, { useRef, useState } from 'react';
-import {
-  Alert, Animated, Modal, Pressable, StyleSheet, Text, TextInput, View,
-} from 'react-native';
+import { Alert, Modal, Pressable, StyleSheet, Text, TextInput, View } from 'react-native';
 import { Feather } from '@expo/vector-icons';
 import * as Haptics from 'expo-haptics';
 import { useColors } from '@/hooks/useColors';
@@ -30,12 +29,12 @@ export function TaskCard({ task, onPressDetail }: Props) {
   const strip = urgencyColor(task.urgency, task.dueDate);
   const overdue = isOverdue(task.dueDate);
   const today = todayISO();
-  const allSubtasksDone = task.subtasks.length === 0 || task.subtasks.every((s) => s.isCompleted);
+  const hasSubtasks = task.subtasks.length > 0;
+  const allSubtasksDone = !hasSubtasks || task.subtasks.every((s) => s.isCompleted);
   const completedCount = task.subtasks.filter((s) => s.isCompleted).length;
-  const progress = task.subtasks.length > 0 ? completedCount / task.subtasks.length : 0;
+  const progress = hasSubtasks ? completedCount / task.subtasks.length : 0;
 
   const urgencyLabel = task.urgency.charAt(0).toUpperCase() + task.urgency.slice(1);
-  const urgencyColor2 = strip;
 
   function handleLongPress() {
     Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
@@ -48,6 +47,11 @@ export function TaskCard({ task, onPressDetail }: Props) {
 
   function cancelLongPress() {
     if (pressTimer.current) clearTimeout(pressTimer.current);
+  }
+
+  function handlePress() {
+    // Only toggle expand if there are subtasks
+    if (hasSubtasks) setExpanded((e) => !e);
   }
 
   function handleComplete() {
@@ -77,7 +81,7 @@ export function TaskCard({ task, onPressDetail }: Props) {
         onLongPress={handleLongPress}
         onPressIn={startLongPress}
         onPressOut={cancelLongPress}
-        onPress={() => setExpanded((e) => !e)}
+        onPress={handlePress}
         style={[styles.card, { backgroundColor: c.card, borderColor: c.border }]}
       >
         {/* Left urgency strip */}
@@ -97,18 +101,21 @@ export function TaskCard({ task, onPressDetail }: Props) {
                 {task.title}
               </Text>
             </View>
-            <Feather
-              name={expanded ? 'chevron-up' : 'chevron-down'}
-              size={16}
-              color={c.mutedForeground}
-            />
+            {/* FIX 2: Only render chevron when subtasks exist */}
+            {hasSubtasks && (
+              <Feather
+                name={expanded ? 'chevron-up' : 'chevron-down'}
+                size={16}
+                color={c.mutedForeground}
+              />
+            )}
           </View>
 
           {/* Badges row */}
           <View style={styles.badgesRow}>
-            <View style={[styles.urgencyBadge, { backgroundColor: urgencyColor2 + '22' }]}>
-              <View style={[styles.dot, { backgroundColor: urgencyColor2 }]} />
-              <Text style={[styles.badgeText, { color: urgencyColor2 }]}>{urgencyLabel}</Text>
+            <View style={[styles.urgencyBadge, { backgroundColor: strip + '22' }]}>
+              <View style={[styles.dot, { backgroundColor: strip }]} />
+              <Text style={[styles.badgeText, { color: strip }]}>{urgencyLabel}</Text>
             </View>
             {task.dueDate !== today && (
               <View style={[styles.dateBadge, { backgroundColor: c.surface, borderColor: c.border }]}>
@@ -120,20 +127,25 @@ export function TaskCard({ task, onPressDetail }: Props) {
             )}
           </View>
 
-          {/* Subtask progress */}
-          {task.subtasks.length > 0 && (
+          {/* FIX 2: Subtask progress — only when subtasks exist */}
+          {hasSubtasks && (
             <View style={styles.progressSection}>
               <Text style={[styles.progressLabel, { color: c.mutedForeground }]}>
                 {completedCount} / {task.subtasks.length} subtasks
               </Text>
               <View style={[styles.progressTrack, { backgroundColor: c.surface }]}>
-                <View style={[styles.progressFill, { width: `${progress * 100}%` as any, backgroundColor: c.primary }]} />
+                <View
+                  style={[
+                    styles.progressFill,
+                    { width: `${progress * 100}%` as any, backgroundColor: c.primary },
+                  ]}
+                />
               </View>
             </View>
           )}
 
           {/* Expanded subtasks */}
-          {expanded && task.subtasks.length > 0 && (
+          {expanded && hasSubtasks && (
             <View style={styles.subtasksContainer}>
               {task.subtasks.map((s) => (
                 <Pressable
@@ -144,8 +156,13 @@ export function TaskCard({ task, onPressDetail }: Props) {
                   <View style={[styles.checkbox, { borderColor: s.isCompleted ? c.primary : c.border }]}>
                     {s.isCompleted && <Feather name="check" size={10} color={c.primary} />}
                   </View>
-                  <Text style={[styles.subtaskText, { color: s.isCompleted ? c.mutedForeground : c.foreground },
-                    s.isCompleted && styles.strikethrough]}>
+                  <Text
+                    style={[
+                      styles.subtaskText,
+                      { color: s.isCompleted ? c.mutedForeground : c.foreground },
+                      s.isCompleted && styles.strikethrough,
+                    ]}
+                  >
                     {s.title}
                   </Text>
                 </Pressable>
@@ -156,12 +173,20 @@ export function TaskCard({ task, onPressDetail }: Props) {
           {/* Action buttons */}
           <View style={styles.actions}>
             <Pressable
-              style={[styles.actionBtn, { backgroundColor: allSubtasksDone ? '#22C55E22' : c.surface, opacity: allSubtasksDone ? 1 : 0.4 }]}
+              style={[
+                styles.actionBtn,
+                {
+                  backgroundColor: allSubtasksDone ? '#22C55E22' : c.surface,
+                  opacity: allSubtasksDone ? 1 : 0.4,
+                },
+              ]}
               onPress={handleComplete}
               disabled={!allSubtasksDone}
             >
               <Feather name="check" size={14} color={allSubtasksDone ? '#22C55E' : c.mutedForeground} />
-              <Text style={[styles.actionText, { color: allSubtasksDone ? '#22C55E' : c.mutedForeground }]}>Done</Text>
+              <Text style={[styles.actionText, { color: allSubtasksDone ? '#22C55E' : c.mutedForeground }]}>
+                Done
+              </Text>
             </Pressable>
 
             <Pressable
@@ -251,14 +276,23 @@ const styles = StyleSheet.create({
   body: { flex: 1, padding: 12, gap: 8 },
   titleRow: { flexDirection: 'row', alignItems: 'flex-start', justifyContent: 'space-between', gap: 8 },
   titleLeft: { flex: 1, gap: 4 },
-  overdueTag: { flexDirection: 'row', alignItems: 'center', gap: 4, paddingHorizontal: 6, paddingVertical: 2, borderRadius: 4, alignSelf: 'flex-start' },
+  overdueTag: {
+    flexDirection: 'row', alignItems: 'center', gap: 4,
+    paddingHorizontal: 6, paddingVertical: 2, borderRadius: 4, alignSelf: 'flex-start',
+  },
   overdueText: { fontSize: 10, color: '#EF4444', fontFamily: 'Inter_700Bold', letterSpacing: 0.5 },
   title: { fontSize: 15, fontFamily: 'Inter_500Medium', lineHeight: 20 },
   badgesRow: { flexDirection: 'row', gap: 6, alignItems: 'center' },
-  urgencyBadge: { flexDirection: 'row', alignItems: 'center', gap: 4, paddingHorizontal: 8, paddingVertical: 3, borderRadius: 20 },
+  urgencyBadge: {
+    flexDirection: 'row', alignItems: 'center', gap: 4,
+    paddingHorizontal: 8, paddingVertical: 3, borderRadius: 20,
+  },
   dot: { width: 6, height: 6, borderRadius: 3 },
   badgeText: { fontSize: 11, fontFamily: 'Inter_600SemiBold' },
-  dateBadge: { flexDirection: 'row', alignItems: 'center', gap: 4, paddingHorizontal: 8, paddingVertical: 3, borderRadius: 20, borderWidth: 1 },
+  dateBadge: {
+    flexDirection: 'row', alignItems: 'center', gap: 4,
+    paddingHorizontal: 8, paddingVertical: 3, borderRadius: 20, borderWidth: 1,
+  },
   dateText: { fontSize: 11, fontFamily: 'Inter_500Medium' },
   progressSection: { gap: 4 },
   progressLabel: { fontSize: 11, fontFamily: 'Inter_400Regular' },
@@ -266,18 +300,35 @@ const styles = StyleSheet.create({
   progressFill: { height: 3, borderRadius: 2 },
   subtasksContainer: { gap: 6, paddingTop: 4 },
   subtaskRow: { flexDirection: 'row', alignItems: 'center', gap: 8 },
-  checkbox: { width: 16, height: 16, borderRadius: 4, borderWidth: 1.5, alignItems: 'center', justifyContent: 'center' },
+  checkbox: {
+    width: 16, height: 16, borderRadius: 4, borderWidth: 1.5,
+    alignItems: 'center', justifyContent: 'center',
+  },
   subtaskText: { flex: 1, fontSize: 13, fontFamily: 'Inter_400Regular' },
   strikethrough: { textDecorationLine: 'line-through' },
   actions: { flexDirection: 'row', gap: 6, paddingTop: 4 },
-  actionBtn: { flexDirection: 'row', alignItems: 'center', gap: 4, paddingHorizontal: 10, paddingVertical: 6, borderRadius: 8 },
+  actionBtn: {
+    flexDirection: 'row', alignItems: 'center', gap: 4,
+    paddingHorizontal: 10, paddingVertical: 6, borderRadius: 8,
+  },
   actionText: { fontSize: 12, fontFamily: 'Inter_500Medium' },
-  menuOverlay: { flex: 1, backgroundColor: 'rgba(0,0,0,0.7)', justifyContent: 'center', alignItems: 'center', paddingHorizontal: 24 },
-  menuBox: { width: '100%', maxWidth: 320, borderRadius: 16, borderWidth: 1, padding: 20, gap: 4 },
+  menuOverlay: {
+    flex: 1, backgroundColor: 'rgba(0,0,0,0.7)',
+    justifyContent: 'center', alignItems: 'center', paddingHorizontal: 24,
+  },
+  menuBox: {
+    width: '100%', maxWidth: 320, borderRadius: 16, borderWidth: 1, padding: 20, gap: 4,
+  },
   menuTitle: { fontSize: 16, fontFamily: 'Inter_600SemiBold', marginBottom: 8 },
-  menuItem: { flexDirection: 'row', alignItems: 'center', gap: 10, paddingVertical: 12, borderBottomWidth: 1 },
+  menuItem: {
+    flexDirection: 'row', alignItems: 'center', gap: 10,
+    paddingVertical: 12, borderBottomWidth: 1,
+  },
   menuItemText: { fontSize: 15, fontFamily: 'Inter_400Regular' },
   dateInputRow: { flexDirection: 'row', gap: 8, marginTop: 8 },
-  dateInput: { flex: 1, height: 40, borderRadius: 8, borderWidth: 1, paddingHorizontal: 12, fontSize: 14, fontFamily: 'Inter_400Regular' },
+  dateInput: {
+    flex: 1, height: 40, borderRadius: 8, borderWidth: 1,
+    paddingHorizontal: 12, fontSize: 14, fontFamily: 'Inter_400Regular',
+  },
   applyBtn: { width: 40, height: 40, borderRadius: 8, alignItems: 'center', justifyContent: 'center' },
 });

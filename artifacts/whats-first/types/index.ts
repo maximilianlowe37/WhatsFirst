@@ -18,11 +18,17 @@ export interface Task {
   createdAt: string;
   completedAt: string | null;
   subtasks: Subtask[];
+  notificationId?: string | null;
 }
 
 export interface BypassData {
   usedThisMonth: number;
   month: number; // 0–11
+}
+
+export interface SurveillanceUsage {
+  disabledThisMonth: number;
+  month: number;
 }
 
 export interface BlockedApp {
@@ -35,6 +41,9 @@ export interface AppSettings {
   firstInterruptMinutes: number;
   graceMinutes: number;
   blockedApps: BlockedApp[];
+  maxBypassPerMonth: number;
+  maxSurveillanceDisablesPerMonth: number;
+  notificationsEnabled: boolean;
 }
 
 export type FilterOption = 'all' | 'today' | 'week' | 'urgent' | 'subtasks';

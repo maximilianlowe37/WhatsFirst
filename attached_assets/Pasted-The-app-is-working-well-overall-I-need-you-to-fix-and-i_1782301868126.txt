@@ -1,0 +1,238 @@
+The app is working well overall. I need you to fix and improve 
+several specific things. Do NOT rebuild the app from scratch — 
+apply these changes to the existing code only.
+
+---
+
+**FIX 1: Safe area / screen cutoff on all iPhone models**
+Every screen (Home, History, Settings, TaskDetail) must properly 
+respect the iPhone's safe area. Apply these fixes globally:
+
+- Import and use `useSafeAreaInsets` from 
+  `react-native-safe-area-context` in every screen component.
+- Add `paddingTop: insets.top` to the outermost container 
+  of every screen so content never hides behind the 
+  Dynamic Island, notch, or status bar — on any iPhone model 
+  (iPhone SE 2nd gen, iPhone 14, iPhone 15 Pro Max, etc.).
+- Add `paddingBottom: insets.bottom` where needed so 
+  content is never cut off by the home indicator bar.
+- Wrap the root navigator in `<SafeAreaProvider>` 
+  in App.js if not already done.
+- Test mentally for iPhone SE (smallest current model, 
+  375pt wide, 667pt tall) as the minimum target.
+
+---
+
+**FIX 2: Subtask chevron only shows when subtasks exist**
+In TaskCard.js, the expand/collapse chevron button must only 
+render if the task actually has subtasks. Fix this:
+
+- Only show the chevron ▾ / ▸ button if 
+  `task.subtasks && task.subtasks.length > 0`.
+- Likewise, only show the subtask progress bar and 
+  "X / Y subtasks" text when `task.subtasks.length > 0`.
+- When a task has zero subtasks, the card should be 
+  completely clean — no chevron, no progress bar, 
+  no extra whitespace where they used to be.
+
+---
+
+**FIX 3: Configurable number of Free Passes per month**
+The bypass limit is currently hardcoded to 2. Make it 
+user-configurable:
+
+- In SettingsScreen.js, add a new row in the 
+  "Surveillance" or a new "Free Passes" section:
+  Label: "Free Passes per month"
+  A row with a [−] button, the current number in the 
+  middle (bold), and a [+] button. Range: 1 to 10.
+- Store this value in @whats_first_settings as 
+  `maxBypassPerMonth` (default: 2).
+- In useBypass.js (or wherever bypass logic lives), 
+  replace every hardcoded `2` with the value read 
+  from settings: `maxBypassPerMonth`.
+- Update the header button label and confirmation 
+  dialogs to reflect the correct dynamic max 
+  (e.g. "X of 4 remaining this month").
+
+---
+
+**FIX 4: History screen safe area and Clear button visibility**
+The History screen top and Clear History button are cut off 
+on smaller iPhones. Fix:
+
+- Apply `paddingTop: insets.top` to the History screen 
+  container (same fix as FIX 1 but specifically confirm 
+  it is applied here).
+- Move the "Clear History" button OUT of the navigation 
+  header (where it gets clipped). Place it instead as a 
+  full-width button at the BOTTOM of the screen, 
+  above the tab bar / home indicator, with 
+  `marginBottom: insets.bottom + 16`.
+- Style it as a bordered red button 
+  (border color #EF4444, text color #EF4444, 
+  transparent background) so it's clearly visible 
+  but not aggressive.
+
+---
+
+**FIX 5: Configurable surveillance disable limit per month**
+In Settings, the surveillance toggle is currently unlimited. 
+Add a monthly limit the user can configure:
+
+- Add a new row below the surveillance toggle:
+  Label: "Max disables per month"
+  Same [−] / number / [+] UI as FIX 3. Range: 1 to 10. 
+  Default: 3.
+- Store as `maxSurveillanceDisablesPerMonth` in 
+  @whats_first_settings.
+- Track usage in @whats_first_bypass (or a new key 
+  @whats_first_surveillance) as:
+  { disabledThisMonth: number, month: number }
+- When the user tries to toggle surveillance OFF:
+  - If disabledThisMonth >= maxSurveillanceDisablesPerMonth:
+    Show Alert: "You've reached your limit for disabling 
+    surveillance this month (X times). You can increase 
+    this limit in Settings."
+    Do NOT toggle it off.
+  - Otherwise: show confirmation Alert, then toggle off 
+    AND increment disabledThisMonth.
+- Reset disabledThisMonth to 0 on month change 
+  (same pattern as bypass monthly reset).
+- Show remaining disables near the toggle: 
+  small grey text "X disables remaining this month".
+
+---
+
+**FIX 6: Settings layout — plus buttons visible + app picker**
+Two separate fixes for the Settings screen:
+
+**6a — Layout fix for sliders/buttons cut off:**
+- Wrap the entire Settings screen content in a 
+  `<ScrollView>` with `contentContainerStyle={{ 
+  paddingBottom: insets.bottom + 32 }}` so nothing 
+  is ever cut off at the bottom on any iPhone size.
+- Make sure the [+] and [−] buttons in the timing 
+  sections have a minimum touch target of 44×44pt 
+  (set explicit width: 44, height: 44, and center 
+  the text inside) so they are always fully visible 
+  and tappable.
+
+**6b — App picker instead of manual text input:**
+- Replace the "Add app" Alert.prompt / text input 
+  with an ActionSheet (use React Native's 
+  `ActionSheetIOS.showActionSheetWithOptions` on iOS).
+- The ActionSheet must list these popular social/
+  entertainment apps as options:
+    TikTok, Instagram, YouTube, Facebook, Twitter/X, 
+    Snapchat, Reddit, Twitch, Netflix, BeReal, 
+    LinkedIn, Pinterest, Spotify, Discord, WhatsApp
+  Plus a "Cancel" option at the bottom.
+- Filter out apps already in the blockedApps list 
+  so they don't appear twice in the picker.
+- When the user selects an app from the list, 
+  add it to blockedApps immediately.
+- On Android (fallback): show a Modal with a 
+  FlatList of the same app names as TouchableOpacity 
+  rows, since ActionSheetIOS is iOS-only.
+
+---
+
+**FIX 7: Date picker — native iOS roller (spinner)**
+When the user picks a due date in the Add Task bottom 
+sheet (and in TaskDetailScreen), replace the current 
+date input with a native iOS spinner/roller:
+
+- Use `@react-native-community/datetimepicker` 
+  (install with `npx expo install 
+  @react-native-community/datetimepicker` — 
+  this IS compatible with Expo Go).
+- Display it with:
+    mode="date"
+    display="spinner"   ← this is the roller/drum 
+                           scroll UI exactly like 
+                           the iOS alarm clock
+    locale="en-GB"      ← day / month / year order
+- On iOS, show the spinner inline inside the 
+  bottom sheet when the user taps the date field 
+  (no separate modal needed — it appears below 
+  the due date row and the user scrolls the drums).
+- On Android, keep `display="default"` which 
+  shows the native Android calendar picker.
+- The selected date should update live as 
+  the user scrolls each roller drum.
+
+---
+
+**FIX 8: Enable Expo Push Notifications**
+Add push notification support using Expo Notifications 
+(`expo-notifications` — already included in Expo Go).
+
+Create a new file: `src/utils/notifications.js`
+
+It must export these functions:
+
+`registerForPushNotifications()`:
+  - Calls `Notifications.requestPermissionsAsync()`.
+  - If granted, gets the Expo push token with 
+    `Notifications.getExpoPushTokenAsync()`.
+  - Stores the token in AsyncStorage as 
+    @whats_first_push_token.
+  - Sets the notification channel for Android 
+    (name: "default", importance: MAX).
+  - Call this function once on app startup in App.js.
+
+`scheduleTaskReminder(task)`:
+  - Schedules a local notification for a task 
+    using `Notifications.scheduleNotificationAsync()`.
+  - Trigger: 1 hour before task.dueDate (if dueDate 
+    has a time component) OR at 9:00 AM on the 
+    dueDate day (if it's a date-only task).
+  - Title: "⏰ What's first?"
+  - Body: "Don't forget: [task.title] is due today."
+  - Data: { taskId: task.id }
+  - Store the returned notification identifier back 
+    into the task object as `notificationId` in 
+    AsyncStorage so it can be cancelled later.
+
+`cancelTaskReminder(task)`:
+  - If task.notificationId exists, calls 
+    `Notifications.cancelScheduledNotificationAsync(
+    task.notificationId)`.
+  - Call this when a task is marked Done or Cancelled.
+
+`cancelAllReminders()`:
+  - Calls `Notifications.cancelAllScheduledNotificationsAsync()`.
+  - Call this when surveillance is disabled.
+
+Wire up the notifications:
+  - Call `scheduleTaskReminder(task)` when a new 
+    task is created AND when a task's dueDate is 
+    changed in TaskDetailScreen.
+  - Call `cancelTaskReminder(task)` when a task 
+    is marked completed or cancelled.
+  - Add a toggle in Settings: "Task reminders" 
+    (default ON). When OFF, cancel all scheduled 
+    notifications and skip scheduling new ones.
+  - Store as `notificationsEnabled: boolean` 
+    in @whats_first_settings.
+
+In App.js, add a notification response listener:
+  - `Notifications.addNotificationResponseReceivedListener`
+  - When user taps a notification, extract taskId 
+    from the data and navigate to that task's 
+    TaskDetailScreen.
+
+---
+
+**GENERAL CONSTRAINTS FOR ALL FIXES**
+- Do not rebuild the app from scratch. 
+  Edit the existing files only.
+- Keep all existing features intact.
+- After your changes, every screen must work 
+  correctly on iPhone SE (375pt) through 
+  iPhone 15 Pro Max (430pt).
+- Test each fix mentally before writing code.
+- If a fix requires a new package, install it 
+  with `npx expo install [package]` (not npm install) 
+  to ensure Expo Go compatibility.

@@ -1,15 +1,17 @@
-// Bottom sheet modal for adding new tasks with urgency, due date, and optional subtasks.
+// Bottom sheet modal for adding new tasks.
+// FIX 7: Uses native DateTimePicker (spinner on iOS, calendar on Android).
 import React, { useRef, useState } from 'react';
 import {
   KeyboardAvoidingView, Modal, Platform, Pressable, ScrollView,
   StyleSheet, Text, TextInput, View,
 } from 'react-native';
+import DateTimePicker from '@react-native-community/datetimepicker';
 import { Feather } from '@expo/vector-icons';
 import * as Haptics from 'expo-haptics';
 import { useColors } from '@/hooks/useColors';
 import { useTasks } from '@/contexts/TasksContext';
 import { Urgency } from '@/types';
-import { todayISO, tomorrowISO, inDaysISO } from '@/utils/dateHelpers';
+import { todayISO, tomorrowISO, inDaysISO, toISO } from '@/utils/dateHelpers';
 
 interface Props {
   visible: boolean;
@@ -22,31 +24,28 @@ const URGENCY_OPTIONS: { key: Urgency; label: string; color: string }[] = [
   { key: 'high', label: 'High', color: '#EF4444' },
 ];
 
-const DATE_OPTIONS = [
-  { label: 'Today', value: todayISO() },
-  { label: 'Tomorrow', value: tomorrowISO() },
-  { label: 'In 2 days', value: inDaysISO(2) },
-];
-
 export function AddTaskModal({ visible, onClose }: Props) {
   const c = useColors();
   const { addTask } = useTasks();
   const [title, setTitle] = useState('');
   const [urgency, setUrgency] = useState<Urgency>('medium');
   const [dueDate, setDueDate] = useState(todayISO());
-  const [customDate, setCustomDate] = useState('');
-  const [showCustomDate, setShowCustomDate] = useState(false);
+  const [dateObj, setDateObj] = useState(new Date());
+  const [showDatePicker, setShowDatePicker] = useState(false); // Android/web only
   const [showSubtasks, setShowSubtasks] = useState(false);
   const [subtasks, setSubtasks] = useState<string[]>([]);
   const [subtaskInput, setSubtaskInput] = useState('');
   const titleRef = useRef<TextInput>(null);
+  const isIOS = Platform.OS === 'ios';
+  const isAndroid = Platform.OS === 'android';
+  const isWeb = Platform.OS === 'web';
 
   function reset() {
     setTitle('');
     setUrgency('medium');
     setDueDate(todayISO());
-    setCustomDate('');
-    setShowCustomDate(false);
+    setDateObj(new Date());
+    setShowDatePicker(false);
     setShowSubtasks(false);
     setSubtasks([]);
     setSubtaskInput('');
@@ -55,6 +54,19 @@ export function AddTaskModal({ visible, onClose }: Props) {
   function handleClose() {
     reset();
     onClose();
+  }
+
+  function selectPreset(iso: string) {
+    setDueDate(iso);
+    setDateObj(new Date(iso + 'T12:00:00'));
+  }
+
+  function handleDateChange(_event: any, date?: Date) {
+    if (isAndroid) setShowDatePicker(false);
+    if (date) {
+      setDateObj(date);
+      setDueDate(toISO(date));
+    }
   }
 
   function addSubtask() {
@@ -69,21 +81,22 @@ export function AddTaskModal({ visible, onClose }: Props) {
 
   function handleSubmit() {
     if (!title.trim()) return;
-    const finalDate = showCustomDate && customDate.match(/^\d{4}-\d{2}-\d{2}$/) ? customDate : dueDate;
     Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
-    addTask({ title, urgency, dueDate: finalDate, subtasks });
+    addTask({ title, urgency, dueDate, subtasks });
     handleClose();
   }
+
+  const presets = [
+    { label: 'Today', value: todayISO() },
+    { label: 'Tomorrow', value: tomorrowISO() },
+    { label: 'In 2 days', value: inDaysISO(2) },
+  ];
 
   return (
     <Modal visible={visible} transparent animationType="slide" onRequestClose={handleClose}>
       <Pressable style={styles.overlay} onPress={handleClose}>
-        <KeyboardAvoidingView
-          behavior={Platform.OS === 'ios' ? 'padding' : undefined}
-          style={styles.kav}
-        >
+        <KeyboardAvoidingView behavior={isIOS ? 'padding' : undefined} style={styles.kav}>
           <Pressable style={[styles.sheet, { backgroundColor: c.card, borderColor: c.border }]}>
-            {/* Handle */}
             <View style={[styles.handle, { backgroundColor: c.border }]} />
             <Text style={[styles.sheetTitle, { color: c.foreground }]}>New task</Text>
 
@@ -122,14 +135,19 @@ export function AddTaskModal({ visible, onClose }: Props) {
 
               {/* Due date */}
               <Text style={[styles.sectionLabel, { color: c.mutedForeground }]}>Due date</Text>
+
+              {/* Quick presets */}
               <View style={styles.dateRow}>
-                {DATE_OPTIONS.map((opt) => {
-                  const selected = !showCustomDate && dueDate === opt.value;
+                {presets.map((opt) => {
+                  const selected = dueDate === opt.value;
                   return (
                     <Pressable
                       key={opt.value}
-                      style={[styles.datePill, { borderColor: selected ? c.primary : c.border, backgroundColor: selected ? c.primary : 'transparent' }]}
-                      onPress={() => { setDueDate(opt.value); setShowCustomDate(false); }}
+                      style={[
+                        styles.datePill,
+                        { borderColor: selected ? c.primary : c.border, backgroundColor: selected ? c.primary : 'transparent' },
+                      ]}
+                      onPress={() => selectPreset(opt.value)}
                     >
                       <Text style={[styles.datePillText, { color: selected ? '#fff' : c.mutedForeground }]}>
                         {opt.label}
@@ -137,29 +155,54 @@ export function AddTaskModal({ visible, onClose }: Props) {
                     </Pressable>
                   );
                 })}
-                <Pressable
-                  style={[styles.datePill, { borderColor: showCustomDate ? c.primary : c.border, backgroundColor: showCustomDate ? c.primary : 'transparent' }]}
-                  onPress={() => setShowCustomDate((v) => !v)}
-                >
-                  <Feather name="calendar" size={12} color={showCustomDate ? '#fff' : c.mutedForeground} />
-                </Pressable>
               </View>
-              {showCustomDate && (
+
+              {/* Date picker — iOS: always-visible spinner | Android: press to open | Web: text */}
+              {isIOS && (
+                <DateTimePicker
+                  value={dateObj}
+                  mode="date"
+                  display="spinner"
+                  locale="en-GB"
+                  onChange={handleDateChange}
+                  style={styles.iosPicker}
+                  textColor="#ffffff"
+                  accentColor="#6366F1"
+                />
+              )}
+
+              {isAndroid && (
+                <>
+                  <Pressable
+                    style={[styles.androidDateBtn, { backgroundColor: c.surface, borderColor: c.border }]}
+                    onPress={() => setShowDatePicker(true)}
+                  >
+                    <Feather name="calendar" size={14} color={c.primary} />
+                    <Text style={[styles.androidDateText, { color: c.foreground }]}>{dueDate}</Text>
+                  </Pressable>
+                  {showDatePicker && (
+                    <DateTimePicker
+                      value={dateObj}
+                      mode="date"
+                      display="default"
+                      onChange={handleDateChange}
+                    />
+                  )}
+                </>
+              )}
+
+              {isWeb && (
                 <TextInput
-                  style={[styles.customDateInput, { backgroundColor: c.surface, color: c.foreground, borderColor: c.border }]}
-                  value={customDate}
-                  onChangeText={setCustomDate}
+                  style={[styles.webDateInput, { backgroundColor: c.surface, color: c.foreground, borderColor: c.border }]}
+                  value={dueDate}
+                  onChangeText={(v) => setDueDate(v)}
                   placeholder="YYYY-MM-DD"
                   placeholderTextColor={c.mutedForeground}
-                  keyboardType="numbers-and-punctuation"
                 />
               )}
 
               {/* Subtasks toggle */}
-              <Pressable
-                style={styles.subtasksToggle}
-                onPress={() => setShowSubtasks((v) => !v)}
-              >
+              <Pressable style={styles.subtasksToggle} onPress={() => setShowSubtasks((v) => !v)}>
                 <Feather name={showSubtasks ? 'minus-circle' : 'plus-circle'} size={16} color={c.primary} />
                 <Text style={[styles.subtasksToggleText, { color: c.primary }]}>
                   {showSubtasks ? 'Hide subtasks' : 'Add subtasks'}
@@ -214,26 +257,55 @@ export function AddTaskModal({ visible, onClose }: Props) {
 const styles = StyleSheet.create({
   overlay: { flex: 1, justifyContent: 'flex-end', backgroundColor: 'rgba(0,0,0,0.6)' },
   kav: { justifyContent: 'flex-end' },
-  sheet: { borderTopLeftRadius: 24, borderTopRightRadius: 24, borderWidth: 1, borderBottomWidth: 0, padding: 20, paddingBottom: 40, maxHeight: '90%' },
+  sheet: {
+    borderTopLeftRadius: 24, borderTopRightRadius: 24,
+    borderWidth: 1, borderBottomWidth: 0,
+    padding: 20, paddingBottom: 40, maxHeight: '90%',
+  },
   handle: { width: 36, height: 4, borderRadius: 2, alignSelf: 'center', marginBottom: 16 },
   sheetTitle: { fontSize: 20, fontFamily: 'Inter_700Bold', marginBottom: 16 },
-  titleInput: { borderRadius: 12, borderWidth: 1, padding: 14, fontSize: 16, fontFamily: 'Inter_400Regular', marginBottom: 16 },
-  sectionLabel: { fontSize: 12, fontFamily: 'Inter_600SemiBold', textTransform: 'uppercase', letterSpacing: 0.8, marginBottom: 8 },
+  titleInput: {
+    borderRadius: 12, borderWidth: 1, padding: 14,
+    fontSize: 16, fontFamily: 'Inter_400Regular', marginBottom: 16,
+  },
+  sectionLabel: {
+    fontSize: 12, fontFamily: 'Inter_600SemiBold',
+    textTransform: 'uppercase', letterSpacing: 0.8, marginBottom: 8,
+  },
   urgencyRow: { flexDirection: 'row', gap: 8, marginBottom: 16 },
-  urgencyPill: { flex: 1, flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 6, paddingVertical: 10, borderRadius: 10, borderWidth: 1.5 },
+  urgencyPill: {
+    flex: 1, flexDirection: 'row', alignItems: 'center', justifyContent: 'center',
+    gap: 6, paddingVertical: 10, borderRadius: 10, borderWidth: 1.5,
+  },
   dot: { width: 7, height: 7, borderRadius: 4 },
   urgencyLabel: { fontSize: 13, fontFamily: 'Inter_600SemiBold' },
-  dateRow: { flexDirection: 'row', gap: 8, marginBottom: 8, flexWrap: 'wrap' },
-  datePill: { paddingHorizontal: 14, paddingVertical: 8, borderRadius: 10, borderWidth: 1, flexDirection: 'row', alignItems: 'center', gap: 4 },
+  dateRow: { flexDirection: 'row', gap: 8, marginBottom: 8 },
+  datePill: { paddingHorizontal: 14, paddingVertical: 8, borderRadius: 10, borderWidth: 1 },
   datePillText: { fontSize: 13, fontFamily: 'Inter_500Medium' },
-  customDateInput: { borderRadius: 10, borderWidth: 1, padding: 10, fontSize: 14, fontFamily: 'Inter_400Regular', marginBottom: 8 },
+  iosPicker: { height: 140, marginBottom: 8 },
+  androidDateBtn: {
+    flexDirection: 'row', alignItems: 'center', gap: 8,
+    borderRadius: 10, borderWidth: 1, padding: 12, marginBottom: 12,
+  },
+  androidDateText: { fontSize: 14, fontFamily: 'Inter_500Medium' },
+  webDateInput: {
+    borderRadius: 10, borderWidth: 1, padding: 10,
+    fontSize: 14, fontFamily: 'Inter_400Regular', marginBottom: 8,
+  },
   subtasksToggle: { flexDirection: 'row', alignItems: 'center', gap: 6, paddingVertical: 10, marginBottom: 4 },
   subtasksToggleText: { fontSize: 14, fontFamily: 'Inter_500Medium' },
   subtasksSection: { gap: 6, marginBottom: 8 },
-  subtaskItem: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', paddingHorizontal: 12, paddingVertical: 8, borderRadius: 8, borderWidth: 1 },
+  subtaskItem: {
+    flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between',
+    paddingHorizontal: 12, paddingVertical: 8, borderRadius: 8, borderWidth: 1,
+  },
   subtaskItemText: { flex: 1, fontSize: 13, fontFamily: 'Inter_400Regular', marginRight: 8 },
   subtaskInputRow: { flexDirection: 'row', gap: 8 },
-  subtaskInput: { flex: 1, borderRadius: 8, borderWidth: 1, paddingHorizontal: 12, paddingVertical: 8, fontSize: 14, fontFamily: 'Inter_400Regular' },
+  subtaskInput: {
+    flex: 1, borderRadius: 8, borderWidth: 1,
+    paddingHorizontal: 12, paddingVertical: 8,
+    fontSize: 14, fontFamily: 'Inter_400Regular',
+  },
   subtaskAddBtn: { width: 40, height: 40, borderRadius: 8, alignItems: 'center', justifyContent: 'center' },
   submitBtn: { borderRadius: 14, paddingVertical: 14, alignItems: 'center', marginTop: 16 },
   submitText: { fontSize: 16, fontFamily: 'Inter_700Bold' },

@@ -1,8 +1,11 @@
 // Tasks context — manages all task CRUD and subtask operations with AsyncStorage persistence.
+// Schedules/cancels push notifications on task lifecycle events.
 import React, { createContext, useCallback, useContext, useEffect, useState } from 'react';
 import { Task, Subtask, Urgency, TaskStatus } from '@/types';
 import { getItem, setItem, STORAGE_KEYS } from '@/utils/storage';
 import { todayISO } from '@/utils/dateHelpers';
+import { scheduleTaskReminder, cancelTaskReminder } from '@/utils/notifications';
+import { useSettings } from '@/contexts/SettingsContext';
 
 function genId(): string {
   return Date.now().toString(36) + Math.random().toString(36).substr(2, 9);
@@ -25,6 +28,7 @@ interface TasksContextValue {
 const TasksContext = createContext<TasksContextValue | null>(null);
 
 export function TasksProvider({ children }: { children: React.ReactNode }) {
+  const { settings } = useSettings();
   const [tasks, setTasks] = useState<Task[]>([]);
   const [isLoaded, setIsLoaded] = useState(false);
 
@@ -35,12 +39,7 @@ export function TasksProvider({ children }: { children: React.ReactNode }) {
     });
   }, []);
 
-  const persist = useCallback((updated: Task[]) => {
-    setTasks(updated);
-    setItem(STORAGE_KEYS.TASKS, updated);
-  }, []);
-
-  const addTask = useCallback((data: { title: string; urgency: Urgency; dueDate: string; subtasks: string[] }) => {
+  const addTask = useCallback(async (data: { title: string; urgency: Urgency; dueDate: string; subtasks: string[] }) => {
     const newTask: Task = {
       id: genId(),
       title: data.title.trim(),
@@ -54,24 +53,50 @@ export function TasksProvider({ children }: { children: React.ReactNode }) {
         title: t.trim(),
         isCompleted: false,
       })),
+      notificationId: null,
     };
+
+    // Schedule notification after creating task
+    const notificationId = await scheduleTaskReminder(newTask, settings.notificationsEnabled);
+    if (notificationId) newTask.notificationId = notificationId;
+
     setTasks((prev) => {
       const updated = [newTask, ...prev];
       setItem(STORAGE_KEYS.TASKS, updated);
       return updated;
     });
-  }, []);
+  }, [settings.notificationsEnabled]);
 
-  const updateTask = useCallback((id: string, updates: Partial<Omit<Task, 'id' | 'createdAt'>>) => {
+  const updateTask = useCallback(async (id: string, updates: Partial<Omit<Task, 'id' | 'createdAt'>>) => {
     setTasks((prev) => {
+      const task = prev.find((t) => t.id === id);
+      if (!task) return prev;
+
+      // If due date changed, reschedule notification
+      if (updates.dueDate && updates.dueDate !== task.dueDate) {
+        cancelTaskReminder(task.notificationId);
+        const updatedTask = { ...task, ...updates };
+        scheduleTaskReminder(updatedTask, settings.notificationsEnabled).then((newId) => {
+          if (newId) {
+            setTasks((p) => {
+              const u = p.map((t) => t.id === id ? { ...t, notificationId: newId } : t);
+              setItem(STORAGE_KEYS.TASKS, u);
+              return u;
+            });
+          }
+        });
+      }
+
       const updated = prev.map((t) => (t.id === id ? { ...t, ...updates } : t));
       setItem(STORAGE_KEYS.TASKS, updated);
       return updated;
     });
-  }, []);
+  }, [settings.notificationsEnabled]);
 
   const completeTask = useCallback((id: string) => {
     setTasks((prev) => {
+      const task = prev.find((t) => t.id === id);
+      if (task?.notificationId) cancelTaskReminder(task.notificationId);
       const updated = prev.map((t) =>
         t.id === id ? { ...t, status: 'completed' as TaskStatus, completedAt: new Date().toISOString() } : t
       );
@@ -82,6 +107,8 @@ export function TasksProvider({ children }: { children: React.ReactNode }) {
 
   const cancelTask = useCallback((id: string) => {
     setTasks((prev) => {
+      const task = prev.find((t) => t.id === id);
+      if (task?.notificationId) cancelTaskReminder(task.notificationId);
       const updated = prev.map((t) =>
         t.id === id ? { ...t, status: 'cancelled' as TaskStatus, completedAt: new Date().toISOString() } : t
       );
@@ -92,6 +119,8 @@ export function TasksProvider({ children }: { children: React.ReactNode }) {
 
   const deleteTask = useCallback((id: string) => {
     setTasks((prev) => {
+      const task = prev.find((t) => t.id === id);
+      if (task?.notificationId) cancelTaskReminder(task.notificationId);
       const updated = prev.filter((t) => t.id !== id);
       setItem(STORAGE_KEYS.TASKS, updated);
       return updated;

@@ -14,9 +14,7 @@ export async function getItem<T>(key: string, defaultValue: T): Promise<T> {
 export async function setItem<T>(key: string, value: T): Promise<void> {
   try {
     await AsyncStorage.setItem(key, JSON.stringify(value));
-  } catch {
-    // Silent fail — localStorage operations should feel snappy
-  }
+  } catch {}
 }
 
 export async function removeItem(key: string): Promise<void> {
@@ -29,4 +27,6 @@ export const STORAGE_KEYS = {
   TASKS: 'wf_tasks',
   BYPASS: 'wf_bypass',
   SETTINGS: 'wf_settings',
+  SURVEILLANCE_USAGE: 'wf_surveillance_usage',
+  PUSH_TOKEN: 'wf_push_token',
 } as const;

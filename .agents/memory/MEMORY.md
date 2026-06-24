@@ -1,0 +1,1 @@
+- [expo-notifications Metro dep fix](expo-notifications-metro.md) — pnpm hoisting hides `define-data-property` from Metro; must install it explicitly in the Expo artifact.
