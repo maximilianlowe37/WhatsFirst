@@ -1,27 +1,65 @@
-// History screen — completed and cancelled tasks.
-// FIX 1/4: paddingTop: insets.top applied (headerShown: false so we own top inset).
-// FIX 4: Clear History button is a bordered red button fixed at the bottom.
+// History screen — completed and cancelled tasks with status + date filters.
+// FIX 1: ScreenHeader handles safe-area paddingTop.
+// FIX 4: Clear History button has solid background, placed below SectionList as sibling.
+// FIX 5: Status filter (All/Completed/Cancelled) + date filter (All/Today/Week/Month).
 import React, { useMemo, useState } from 'react';
-import { Platform, Pressable, SectionList, StyleSheet, Text, View } from 'react-native';
+import { Platform, Pressable, ScrollView, SectionList, StyleSheet, Text, View } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Feather } from '@expo/vector-icons';
 import { useColors } from '@/hooks/useColors';
 import { useTasks } from '@/contexts/TasksContext';
 import { Task } from '@/types';
+import { ScreenHeader } from '@/components/ScreenHeader';
 import { EmptyState } from '@/components/EmptyState';
 import { ConfirmDialog } from '@/components/ConfirmDialog';
 import { urgencyColor } from '@/utils/urgencyColor';
 
+// ─── Filter config ─────────────────────────────────────────────────────────────
+type StatusFilter = 'all' | 'completed' | 'cancelled';
+type DateFilter = 'all' | 'today' | 'thisWeek' | 'thisMonth';
+
+const STATUS_FILTERS: { key: StatusFilter; label: string }[] = [
+  { key: 'all', label: 'All' },
+  { key: 'completed', label: '✓ Completed' },
+  { key: 'cancelled', label: '✕ Cancelled' },
+];
+
+const DATE_FILTERS: { key: DateFilter; label: string }[] = [
+  { key: 'all', label: 'All time' },
+  { key: 'today', label: 'Today' },
+  { key: 'thisWeek', label: 'This week' },
+  { key: 'thisMonth', label: 'This month' },
+];
+
+// ─── Helpers ───────────────────────────────────────────────────────────────────
+function isSameDay(a: Date, b: Date): boolean {
+  return a.getFullYear() === b.getFullYear() &&
+    a.getMonth() === b.getMonth() &&
+    a.getDate() === b.getDate();
+}
+
+function formatHistoryDateLabel(dateKey: string): string {
+  const today = new Date();
+  today.setHours(0, 0, 0, 0);
+  const d = new Date(dateKey + 'T00:00:00');
+  if (isSameDay(d, today)) return 'Today';
+  const yesterday = new Date(today);
+  yesterday.setDate(today.getDate() - 1);
+  if (isSameDay(d, yesterday)) return 'Yesterday';
+  return d.toLocaleDateString('en-GB', { weekday: 'short', day: 'numeric', month: 'short' });
+}
+
+// ─── History item ──────────────────────────────────────────────────────────────
 function HistoryItem({ task }: { task: Task }) {
   const c = useColors();
   const strip = urgencyColor(task.urgency, task.dueDate);
   const completedDate = task.completedAt
-    ? new Date(task.completedAt).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })
+    ? new Date(task.completedAt).toLocaleDateString('en-GB', { day: 'numeric', month: 'short', year: 'numeric' })
     : '—';
 
   return (
     <View style={[styles.item, { backgroundColor: c.card, borderColor: c.border }]}>
-      <View style={[styles.strip, { backgroundColor: strip }]} />
+      <View style={[styles.itemStrip, { backgroundColor: strip }]} />
       <View style={styles.itemBody}>
         <Text style={[styles.itemTitle, { color: c.foreground }]} numberOfLines={2}>
           {task.title}
@@ -33,91 +71,169 @@ function HistoryItem({ task }: { task: Task }) {
               {task.urgency.charAt(0).toUpperCase() + task.urgency.slice(1)}
             </Text>
           </View>
-          <Text style={[styles.metaText, { color: c.mutedForeground }]}>{completedDate}</Text>
-          {task.subtasks.length > 0 && (
-            <Text style={[styles.metaText, { color: c.mutedForeground }]}>
-              {task.subtasks.filter((s) => s.isCompleted).length}/{task.subtasks.length} subtasks
+          <View style={[styles.statusBadge, { backgroundColor: task.status === 'completed' ? '#22C55E22' : '#EF444422' }]}>
+            <Feather
+              name={task.status === 'completed' ? 'check' : 'x'}
+              size={10}
+              color={task.status === 'completed' ? '#22C55E' : '#EF4444'}
+            />
+            <Text style={[styles.badgeText, { color: task.status === 'completed' ? '#22C55E' : '#EF4444' }]}>
+              {task.status === 'completed' ? 'Done' : 'Cancelled'}
             </Text>
-          )}
+          </View>
+          <Text style={[styles.metaDate, { color: c.mutedForeground }]}>{completedDate}</Text>
         </View>
+        {task.subtasks.length > 0 && (
+          <Text style={[styles.subtaskCount, { color: c.mutedForeground }]}>
+            {task.subtasks.filter((s) => s.isCompleted).length}/{task.subtasks.length} subtasks
+          </Text>
+        )}
       </View>
     </View>
   );
 }
 
+// ─── Screen ────────────────────────────────────────────────────────────────────
 export default function HistoryScreen() {
   const c = useColors();
   const insets = useSafeAreaInsets();
   const { tasks, clearHistory } = useTasks();
   const [clearConfirm, setClearConfirm] = useState(false);
-  const isWeb = Platform.OS === 'web';
+  // FIX 5: local filter state (resets on tab switch — intentional)
+  const [statusFilter, setStatusFilter] = useState<StatusFilter>('all');
+  const [dateFilter, setDateFilter] = useState<DateFilter>('all');
 
-  const completed = useMemo(() =>
-    tasks.filter((t) => t.status === 'completed')
-      .sort((a, b) => (b.completedAt || '').localeCompare(a.completedAt || '')),
-    [tasks]
-  );
-  const cancelled = useMemo(() =>
-    tasks.filter((t) => t.status === 'cancelled')
-      .sort((a, b) => (b.completedAt || '').localeCompare(a.completedAt || '')),
+  const historyTasks = useMemo(
+    () => tasks.filter((t) => t.status === 'completed' || t.status === 'cancelled'),
     [tasks]
   );
 
+  // FIX 5: filter logic — pure useMemo, synchronous, no async
+  const filteredTasks = useMemo(() => {
+    const now = new Date();
+    return historyTasks.filter((task) => {
+      if (statusFilter !== 'all' && task.status !== statusFilter) return false;
+      if (dateFilter !== 'all') {
+        const eventDate = new Date(task.completedAt || task.createdAt);
+        if (dateFilter === 'today') return isSameDay(eventDate, now);
+        if (dateFilter === 'thisWeek') {
+          const weekAgo = new Date(now);
+          weekAgo.setDate(now.getDate() - 7);
+          return eventDate >= weekAgo;
+        }
+        if (dateFilter === 'thisMonth') {
+          return eventDate.getMonth() === now.getMonth() &&
+            eventDate.getFullYear() === now.getFullYear();
+        }
+      }
+      return true;
+    });
+  }, [historyTasks, statusFilter, dateFilter]);
+
+  // Sort by completedAt descending, then group by date
   const sections = useMemo(() => {
-    const s = [];
-    if (completed.length > 0) s.push({ title: 'Completed', icon: 'check-circle' as const, data: completed });
-    if (cancelled.length > 0) s.push({ title: 'Cancelled', icon: 'x-circle' as const, data: cancelled });
-    return s;
-  }, [completed, cancelled]);
+    const sorted = [...filteredTasks].sort(
+      (a, b) => (b.completedAt || '').localeCompare(a.completedAt || '')
+    );
+    const map = new Map<string, Task[]>();
+    for (const t of sorted) {
+      const dateKey = (t.completedAt || t.createdAt).slice(0, 10);
+      const existing = map.get(dateKey) || [];
+      existing.push(t);
+      map.set(dateKey, existing);
+    }
+    return Array.from(map.entries()).map(([dateKey, data]) => ({
+      title: formatHistoryDateLabel(dateKey),
+      data,
+    }));
+  }, [filteredTasks]);
 
-  const totalHistory = completed.length + cancelled.length;
+  const totalHistory = historyTasks.length;
+  // FIX 4: tab bar height for bottom padding
+  const tabBarHeight = 49 + insets.bottom;
 
-  // FIX 1/4: Use insets.top for native safe area (no header on this screen)
-  const topPad = insets.top + (isWeb ? 67 : 0);
-  // FIX 4: Clear button sits above tab bar + home indicator
-  const clearBtnBottom = insets.bottom + (isWeb ? 34 : 0) + 76; // 76 = tab bar height
-  const listBottomPad = totalHistory > 0 ? clearBtnBottom + 56 : insets.bottom + (isWeb ? 34 : 0) + 76 + 16;
+  // ─── Shared pill renderer ─────────────────────────────────────────────────
+  function renderPills<T extends string>(
+    items: { key: T; label: string }[],
+    active: T,
+    onPress: (k: T) => void
+  ) {
+    return items.map((f) => {
+      const isActive = f.key === active;
+      return (
+        <Pressable
+          key={f.key}
+          style={[
+            styles.filterPill,
+            { borderColor: isActive ? c.primary : c.border },
+            isActive && { backgroundColor: c.primary },
+          ]}
+          onPress={() => onPress(f.key)}
+        >
+          <Text style={[styles.filterPillText, { color: isActive ? '#fff' : c.mutedForeground }]}>
+            {f.label}
+          </Text>
+        </Pressable>
+      );
+    });
+  }
 
   return (
     <View style={[styles.container, { backgroundColor: c.background }]}>
-      {/* Header — safe area aware */}
-      <View style={[styles.headerRow, { paddingTop: topPad + 8, borderBottomColor: c.border }]}>
-        <Text style={[styles.headerTitle, { color: c.foreground }]}>History</Text>
-        {totalHistory > 0 && (
-          <Text style={[styles.countText, { color: c.mutedForeground }]}>
-            {totalHistory} item{totalHistory !== 1 ? 's' : ''}
-          </Text>
-        )}
+      {/* ScreenHeader handles safe-area paddingTop */}
+      <ScreenHeader title="History" />
+
+      {/* FIX 5: Filter rows — siblings of SectionList, never scroll away */}
+      <View style={[styles.filterBlock, { backgroundColor: c.background, borderBottomColor: c.border }]}>
+        {/* Row 1: Status */}
+        <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.filterRow}>
+          {renderPills(STATUS_FILTERS, statusFilter, setStatusFilter)}
+        </ScrollView>
+        {/* Row 2: Date */}
+        <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.filterRow}>
+          {renderPills(DATE_FILTERS, dateFilter, setDateFilter)}
+        </ScrollView>
       </View>
 
+      {/* Task list — flex:1 so ONLY this scrolls */}
       <SectionList
+        style={styles.list}
         sections={sections}
         keyExtractor={(item) => item.id}
-        contentContainerStyle={{ paddingBottom: listBottomPad, paddingTop: 4 }}
+        contentContainerStyle={{ paddingBottom: 12, paddingTop: 4 }}
         renderSectionHeader={({ section }) => (
           <View style={[styles.sectionHeader, { backgroundColor: c.background }]}>
-            <Feather name={section.icon} size={14} color={c.mutedForeground} />
             <Text style={[styles.sectionTitle, { color: c.mutedForeground }]}>{section.title}</Text>
-            <Text style={[styles.sectionCount, { color: c.mutedForeground }]}>({section.data.length})</Text>
           </View>
         )}
         renderItem={({ item }) => <HistoryItem task={item} />}
         ListEmptyComponent={
-          <EmptyState message="No history yet — complete your first task!" icon="clock" />
+          filteredTasks.length === 0 && historyTasks.length > 0
+            ? <EmptyState message="No history matches this filter." icon="filter" />
+            : <EmptyState message="No history yet — complete your first task!" icon="clock" />
         }
         stickySectionHeadersEnabled
         showsVerticalScrollIndicator={false}
       />
 
-      {/* FIX 4: Full-width bordered red Clear History button fixed at bottom */}
+      {/* FIX 4: Clear button — solid bg, sibling of SectionList, NEVER transparent */}
       {totalHistory > 0 && (
-        <Pressable
-          style={[styles.clearBtnBottom, { borderColor: '#EF4444', bottom: clearBtnBottom }]}
-          onPress={() => setClearConfirm(true)}
-        >
-          <Feather name="trash-2" size={16} color="#EF4444" />
-          <Text style={styles.clearBtnBottomText}>Clear History</Text>
-        </Pressable>
+        <View style={[
+          styles.clearWrapper,
+          {
+            backgroundColor: c.background,
+            borderTopColor: c.border,
+            paddingBottom: tabBarHeight + 12,
+          },
+        ]}>
+          <Pressable
+            style={[styles.clearBtn, { borderColor: '#EF4444', backgroundColor: c.background }]}
+            onPress={() => setClearConfirm(true)}
+          >
+            <Feather name="trash-2" size={16} color="#EF4444" />
+            <Text style={styles.clearBtnText}>Clear History</Text>
+          </Pressable>
+        </View>
       )}
 
       <ConfirmDialog
@@ -135,46 +251,67 @@ export default function HistoryScreen() {
 
 const styles = StyleSheet.create({
   container: { flex: 1 },
-  headerRow: {
-    flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between',
-    paddingHorizontal: 16, paddingBottom: 12, borderBottomWidth: 1,
+  // FIX 5: filter rows block
+  filterBlock: {
+    borderBottomWidth: 1,
+    paddingVertical: 4,
   },
-  headerTitle: { fontSize: 28, fontFamily: 'Inter_700Bold' },
-  countText: { fontSize: 13, fontFamily: 'Inter_400Regular' },
-  sectionHeader: {
-    flexDirection: 'row', alignItems: 'center', gap: 6,
-    paddingHorizontal: 16, paddingVertical: 10,
+  filterRow: {
+    flexDirection: 'row',
+    paddingHorizontal: 16,
+    paddingVertical: 5,
+    gap: 8,
   },
+  filterPill: {
+    paddingHorizontal: 12,
+    paddingVertical: 6,
+    borderRadius: 20,
+    borderWidth: 1,
+  },
+  filterPillText: { fontSize: 13, fontFamily: 'Inter_500Medium' },
+  // List
+  list: { flex: 1 },
+  sectionHeader: { paddingHorizontal: 16, paddingVertical: 8 },
   sectionTitle: { fontSize: 12, fontFamily: 'Inter_700Bold', textTransform: 'uppercase', letterSpacing: 0.8 },
-  sectionCount: { fontSize: 12, fontFamily: 'Inter_400Regular' },
+  // History item
   item: {
-    flexDirection: 'row', marginHorizontal: 16, marginBottom: 8,
-    borderRadius: 10, borderWidth: 1, overflow: 'hidden',
+    flexDirection: 'row',
+    marginHorizontal: 16,
+    marginBottom: 8,
+    borderRadius: 10,
+    borderWidth: 1,
+    overflow: 'hidden',
   },
-  strip: { width: 4 },
+  itemStrip: { width: 4 },
   itemBody: { flex: 1, padding: 12, gap: 6 },
   itemTitle: { fontSize: 14, fontFamily: 'Inter_500Medium' },
-  itemMeta: { flexDirection: 'row', alignItems: 'center', gap: 8, flexWrap: 'wrap' },
+  itemMeta: { flexDirection: 'row', alignItems: 'center', gap: 6, flexWrap: 'wrap' },
   badge: {
     flexDirection: 'row', alignItems: 'center', gap: 4,
-    paddingHorizontal: 7, paddingVertical: 2, borderRadius: 20,
+    paddingHorizontal: 7, paddingVertical: 3, borderRadius: 20,
+  },
+  statusBadge: {
+    flexDirection: 'row', alignItems: 'center', gap: 4,
+    paddingHorizontal: 7, paddingVertical: 3, borderRadius: 20,
   },
   dot: { width: 6, height: 6, borderRadius: 3 },
   badgeText: { fontSize: 11, fontFamily: 'Inter_600SemiBold' },
-  metaText: { fontSize: 11, fontFamily: 'Inter_400Regular' },
-  // FIX 4: Clear button styles
-  clearBtnBottom: {
-    position: 'absolute',
-    left: 16,
-    right: 16,
+  metaDate: { fontSize: 11, fontFamily: 'Inter_400Regular' },
+  subtaskCount: { fontSize: 11, fontFamily: 'Inter_400Regular' },
+  // FIX 4: Clear button — solid bg, top border separator
+  clearWrapper: {
+    borderTopWidth: 1,
+    paddingHorizontal: 16,
+    paddingTop: 12,
+  },
+  clearBtn: {
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'center',
     gap: 8,
-    paddingVertical: 13,
-    borderRadius: 12,
     borderWidth: 1.5,
-    backgroundColor: 'transparent',
+    borderRadius: 10,
+    paddingVertical: 14,
   },
-  clearBtnBottomText: { fontSize: 15, fontFamily: 'Inter_600SemiBold', color: '#EF4444' },
+  clearBtnText: { fontSize: 15, fontFamily: 'Inter_600SemiBold', color: '#EF4444' },
 });

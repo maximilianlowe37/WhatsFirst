@@ -1,6 +1,7 @@
 // Task detail modal — view/edit task, manage subtasks, delete.
-// FIX 7: Uses native DateTimePicker (spinner on iOS, calendar on Android).
-import React, { useEffect, useState } from 'react';
+// FIX 1: Date picker collapsed by default — shows formatted pill, expands on tap.
+// FIX 2: Add-subtask input auto-focuses after each addition via ref + setTimeout.
+import React, { useEffect, useRef, useState } from 'react';
 import {
   KeyboardAvoidingView, Modal, Platform, Pressable, ScrollView,
   StyleSheet, Text, TextInput, View,
@@ -25,6 +26,18 @@ const URGENCY_OPTIONS: { key: Urgency; label: string; color: string }[] = [
   { key: 'high', label: 'High', color: '#EF4444' },
 ];
 
+// FIX 1: Human-readable date label for the collapsed chip.
+function formatDueLabel(dateStr: string): string {
+  const today = new Date();
+  today.setHours(0, 0, 0, 0);
+  const d = new Date(dateStr + 'T00:00:00');
+  if (d.getTime() === today.getTime()) return '📅 Today';
+  const tomorrow = new Date(today);
+  tomorrow.setDate(today.getDate() + 1);
+  if (d.getTime() === tomorrow.getTime()) return '📅 Tomorrow';
+  return '📅 ' + d.toLocaleDateString('en-GB', { weekday: 'short', day: 'numeric', month: 'short' });
+}
+
 export function TaskDetailModal({ task, onClose }: Props) {
   const c = useColors();
   const { updateTask, deleteTask, toggleSubtask, addSubtask, removeSubtask } = useTasks();
@@ -32,9 +45,12 @@ export function TaskDetailModal({ task, onClose }: Props) {
   const [urgency, setUrgency] = useState<Urgency>('medium');
   const [dueDate, setDueDate] = useState('');
   const [dateObj, setDateObj] = useState(new Date());
+  // FIX 1: date picker hidden by default
   const [showDatePicker, setShowDatePicker] = useState(false);
   const [subtaskInput, setSubtaskInput] = useState('');
   const [deleteConfirm, setDeleteConfirm] = useState(false);
+  // FIX 2: ref for auto-focus
+  const addSubtaskInputRef = useRef<TextInput>(null);
   const isIOS = Platform.OS === 'ios';
   const isAndroid = Platform.OS === 'android';
   const isWeb = Platform.OS === 'web';
@@ -67,10 +83,12 @@ export function TaskDetailModal({ task, onClose }: Props) {
     onClose();
   }
 
+  // FIX 2: add subtask and auto-focus the input for the next one
   function handleAddSubtask() {
     if (!task || !subtaskInput.trim()) return;
     addSubtask(task.id, subtaskInput.trim());
     setSubtaskInput('');
+    setTimeout(() => addSubtaskInputRef.current?.focus(), 50);
   }
 
   function handleDateChange(_event: any, date?: Date) {
@@ -127,32 +145,40 @@ export function TaskDetailModal({ task, onClose }: Props) {
                   ))}
                 </View>
 
-                {/* Due date */}
+                {/* Due date — FIX 1 */}
                 <Text style={[styles.label, { color: c.mutedForeground }]}>Due date</Text>
-
-                {isIOS && (
-                  <DateTimePicker
-                    value={dateObj}
-                    mode="date"
-                    display="spinner"
-                    locale="en-GB"
-                    onChange={handleDateChange}
-                    style={styles.iosPicker}
-                    textColor="#ffffff"
-                    accentColor="#6366F1"
-                  />
-                )}
-
-                {isAndroid && (
-                  <>
-                    <Pressable
-                      style={[styles.androidDateBtn, { backgroundColor: c.surface, borderColor: c.border }]}
-                      onPress={() => setShowDatePicker(true)}
-                    >
-                      <Feather name="calendar" size={14} color={c.primary} />
-                      <Text style={[styles.androidDateText, { color: c.foreground }]}>{dueDate}</Text>
+                <View style={styles.dateChipRow}>
+                  <Pressable
+                    style={[styles.dateChip, { backgroundColor: c.surface, borderColor: c.border }]}
+                    onPress={() => setShowDatePicker((v) => !v)}
+                  >
+                    <Text style={[styles.dateChipText, { color: c.foreground }]}>
+                      {formatDueLabel(dueDate)}
+                    </Text>
+                    <Feather name={showDatePicker ? 'chevron-up' : 'chevron-down'} size={14} color={c.mutedForeground} />
+                  </Pressable>
+                  {showDatePicker && isIOS && (
+                    <Pressable onPress={() => setShowDatePicker(false)} style={styles.doneBtn}>
+                      <Text style={[styles.doneBtnText, { color: c.primary }]}>Done</Text>
                     </Pressable>
-                    {showDatePicker && (
+                  )}
+                </View>
+
+                {showDatePicker && (
+                  <>
+                    {isIOS && (
+                      <DateTimePicker
+                        value={dateObj}
+                        mode="date"
+                        display="spinner"
+                        locale="en-GB"
+                        onChange={handleDateChange}
+                        style={styles.iosPicker}
+                        textColor="#ffffff"
+                        accentColor="#6366F1"
+                      />
+                    )}
+                    {isAndroid && (
                       <DateTimePicker
                         value={dateObj}
                         mode="date"
@@ -160,17 +186,16 @@ export function TaskDetailModal({ task, onClose }: Props) {
                         onChange={handleDateChange}
                       />
                     )}
+                    {isWeb && (
+                      <TextInput
+                        style={[styles.input, { backgroundColor: c.surface, color: c.foreground, borderColor: c.border }]}
+                        value={dueDate}
+                        onChangeText={setDueDate}
+                        placeholder="YYYY-MM-DD"
+                        placeholderTextColor={c.mutedForeground}
+                      />
+                    )}
                   </>
-                )}
-
-                {isWeb && (
-                  <TextInput
-                    style={[styles.input, { backgroundColor: c.surface, color: c.foreground, borderColor: c.border }]}
-                    value={dueDate}
-                    onChangeText={setDueDate}
-                    placeholder="YYYY-MM-DD"
-                    placeholderTextColor={c.mutedForeground}
-                  />
                 )}
 
                 {/* Subtasks */}
@@ -197,8 +222,11 @@ export function TaskDetailModal({ task, onClose }: Props) {
                     </Pressable>
                   </View>
                 ))}
+
+                {/* FIX 2: ref on subtask add input, auto-focused after each addition */}
                 <View style={styles.addSubtaskRow}>
                   <TextInput
+                    ref={addSubtaskInputRef}
                     style={[styles.subtaskInput, { backgroundColor: c.surface, color: c.foreground, borderColor: c.border }]}
                     value={subtaskInput}
                     onChangeText={setSubtaskInput}
@@ -206,6 +234,7 @@ export function TaskDetailModal({ task, onClose }: Props) {
                     placeholderTextColor={c.mutedForeground}
                     returnKeyType="done"
                     onSubmitEditing={handleAddSubtask}
+                    blurOnSubmit={false}
                   />
                   <Pressable style={[styles.addBtn, { backgroundColor: c.primary }]} onPress={handleAddSubtask}>
                     <Feather name="plus" size={16} color="#fff" />
@@ -273,12 +302,16 @@ const styles = StyleSheet.create({
   },
   dot: { width: 7, height: 7, borderRadius: 4 },
   urgencyLabel: { fontSize: 13, fontFamily: 'Inter_600SemiBold' },
-  iosPicker: { height: 140, marginBottom: 12 },
-  androidDateBtn: {
-    flexDirection: 'row', alignItems: 'center', gap: 8,
-    borderRadius: 10, borderWidth: 1, padding: 12, marginBottom: 12,
+  // FIX 1: date chip styles
+  dateChipRow: { flexDirection: 'row', alignItems: 'center', gap: 10, marginBottom: 4 },
+  dateChip: {
+    flex: 1, flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between',
+    borderRadius: 10, borderWidth: 1, paddingHorizontal: 14, paddingVertical: 10,
   },
-  androidDateText: { fontSize: 14, fontFamily: 'Inter_500Medium' },
+  dateChipText: { fontSize: 14, fontFamily: 'Inter_500Medium' },
+  doneBtn: { paddingHorizontal: 4, paddingVertical: 8 },
+  doneBtnText: { fontSize: 15, fontFamily: 'Inter_600SemiBold' },
+  iosPicker: { height: 160, marginBottom: 8 },
   subtaskRow: {
     flexDirection: 'row', alignItems: 'center', gap: 8,
     paddingVertical: 8, borderBottomWidth: 1,

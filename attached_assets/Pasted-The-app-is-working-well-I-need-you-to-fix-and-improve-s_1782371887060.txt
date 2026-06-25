@@ -1,0 +1,364 @@
+The app is working well. I need you to fix and improve several 
+specific UI behaviours. Do NOT rebuild the app from scratch — 
+edit existing files only. Read each relevant file before touching it.
+
+---
+
+## FIX 1: Due date field in Add Task — collapsed by default, 
+## roller only on tap
+
+In the Add Task bottom sheet / modal:
+
+Current behaviour: the date roller is always visible.
+Desired behaviour: the date field shows a simple tappable 
+pill/chip labelled "📅 Today" by default. The roller only 
+appears after the user taps that chip.
+
+Implement it like this:
+
+- Add a local boolean state: `const [showDatePicker, 
+  setShowDatePicker] = useState(false)`.
+- Default `dueDate` state to today's date (start of day, 
+  no time component).
+- Render a TouchableOpacity chip INSTEAD of the picker:
+    <TouchableOpacity 
+      onPress={() => setShowDatePicker(true)}
+      style={styles.datePill}
+    >
+      <Text style={styles.datePillText}>
+        {isToday(dueDate) ? "📅 Today" : format(dueDate)}
+      </Text>
+    </TouchableOpacity>
+  Where format(dueDate) shows a human-readable string 
+  like "📅 Wed 25 Jun".
+- Below the chip, conditionally render the spinner:
+    {showDatePicker && (
+      <DateTimePicker
+        value={dueDate}
+        mode="date"
+        display="spinner"   // iOS roller
+        onChange={(event, date) => {
+          if (date) setDueDate(date);
+        }}
+        textColor="#FFFFFF"
+        style={{ height: 180 }}
+      />
+    )}
+- Once the picker is open, show a small "Done" link 
+  (TouchableOpacity with text "Done" in accent color) 
+  to the right of or below the chip that sets 
+  setShowDatePicker(false) and collapses the roller.
+- Apply the same pattern to TaskDetailScreen/Modal 
+  wherever due date is edited.
+- Write a local helper:
+    function formatDueLabel(date) {
+      const today = new Date();
+      today.setHours(0,0,0,0);
+      const d = new Date(date);
+      d.setHours(0,0,0,0);
+      if (d.getTime() === today.getTime()) return "📅 Today";
+      const tomorrow = new Date(today);
+      tomorrow.setDate(today.getDate() + 1);
+      if (d.getTime() === tomorrow.getTime()) return "📅 Tomorrow";
+      return "📅 " + d.toLocaleDateString("en-GB", 
+        { weekday: "short", day: "numeric", month: "short" });
+    }
+
+---
+
+## FIX 2: Auto-focus every new subtask text field
+
+In both the Add Task modal and TaskDetailScreen, when the 
+user taps "Add subtask" or the "+" subtask button:
+
+- Each subtask input must be rendered with a `ref`.
+- Immediately after the new subtask row appears, call 
+  `.focus()` on its ref so the keyboard opens automatically 
+  and the cursor lands inside the new field.
+- Use this pattern for the subtask list:
+
+    const inputRefs = useRef({});
+
+    // When rendering each subtask input:
+    <TextInput
+      ref={ref => { inputRefs.current[subtask.id] = ref; }}
+      autoFocus={subtask.id === newestSubtaskId}
+      ...
+    />
+
+    // When adding a new subtask:
+    const newId = uid();
+    setNewestSubtaskId(newId);
+    setSubtasks(prev => [...prev, 
+      { id: newId, title: '', isCompleted: false }
+    ]);
+    // Then in a useEffect watching newestSubtaskId:
+    useEffect(() => {
+      if (newestSubtaskId && inputRefs.current[newestSubtaskId]) {
+        // Small timeout ensures the ref is mounted before focus
+        setTimeout(() => {
+          inputRefs.current[newestSubtaskId]?.focus();
+        }, 50);
+      }
+    }, [newestSubtaskId]);
+
+- Make sure KeyboardAvoidingView (behavior="padding" on iOS) 
+  wraps the modal content so the keyboard doesn't cover 
+  the newly focused input.
+- This must work for every subtask added, not just the first.
+
+---
+
+## FIX 3: Filter bar always sticky — never scrolls away
+
+This is the most important layout fix in this batch.
+
+Current problem: when many tasks exist, the filter bar 
+(All, Today, This Week, Urgent, Has Subtasks) scrolls 
+away with the list content and becomes unreachable.
+
+The required structure for HomeScreen is EXACTLY this — 
+do not deviate:
+
+<View style={{ flex: 1, backgroundColor: '#0F0F0F' }}>
+
+  {/* 1. Safe-area-aware header — NEVER scrolls */}
+  <ScreenHeader ... />
+
+  {/* 2. Surveillance banner — NEVER scrolls */}
+  {!surveillanceEnabled && <SurveillanceBanner />}
+
+  {/* 3. Filter bar — NEVER scrolls, always pinned below header */}
+  <View style={{
+    backgroundColor: '#0F0F0F',
+    paddingVertical: 8,
+    borderBottomWidth: 1,
+    borderBottomColor: '#242424',
+    zIndex: 10,
+  }}>
+    <FilterBar 
+      activeFilter={activeFilter} 
+      onFilterChange={setActiveFilter} 
+    />
+  </View>
+
+  {/* 4. Task count text — pinned, never scrolls */}
+  <Text style={styles.taskCount}>
+    Showing {visibleCount} of {totalCount} tasks
+  </Text>
+
+  {/* 5. SectionList — THIS IS THE ONLY THING THAT SCROLLS */}
+  <SectionList
+    style={{ flex: 1 }}
+    contentContainerStyle={{ 
+      paddingBottom: insets.bottom + 90 
+    }}
+    stickySectionHeadersEnabled={true}
+    sections={groupedTasks}
+    keyExtractor={item => item.id}
+    renderItem={({ item }) => <TaskCard task={item} ... />}
+    renderSectionHeader={({ section }) => (
+      <View style={styles.sectionHeader}>
+        <Text style={styles.sectionHeaderText}>
+          {section.title}
+        </Text>
+      </View>
+    )}
+    ListFooterComponent={
+      hasMore ? (
+        <TouchableOpacity onPress={loadMore} style={styles.loadMore}>
+          <Text>Load more ({remaining} remaining)</Text>
+        </TouchableOpacity>
+      ) : null
+    }
+  />
+
+  {/* 6. FAB */}
+  <TouchableOpacity 
+    style={[styles.fab, { bottom: insets.bottom + 70 }]}
+    ...
+  />
+
+</View>
+
+Key rules:
+- Items 1, 2, 3, 4 are outside the SectionList — they are 
+  SIBLINGS of it inside the flex:1 parent, not children of it.
+- NEVER put the FilterBar inside the SectionList's 
+  ListHeaderComponent — that makes it scroll with the list.
+- The FilterBar's ScrollView (horizontal pill scroll) must 
+  have showsHorizontalScrollIndicator={false} and its pills 
+  must have paddingHorizontal: 16 on the container.
+- Each filter pill must have a minimum width so text is 
+  never truncated. Use paddingHorizontal: 14, paddingVertical: 8 
+  on each pill. Never clip pill text.
+- The sectionHeader (Today, Tomorrow, etc.) uses 
+  stickySectionHeadersEnabled={true} so day group headers 
+  stick as you scroll within the list — this is separate 
+  from the filter bar being sticky.
+
+---
+
+## FIX 4: Clear History button — solid background, no bleed-through
+
+In HistoryScreen.js, the Clear History button is currently 
+positioned at the bottom of the screen with a transparent 
+background, causing task cards to show through it when 
+the list is long.
+
+Fix:
+- The button container must have a solid background color 
+  that matches the app background:
+    backgroundColor: '#0F0F0F'  // dark mode
+  If you have a theme/color system, use the same value 
+  as the screen background — do NOT use 'transparent'.
+- Add a top border to visually separate it from the list:
+    borderTopWidth: 1,
+    borderTopColor: '#242424',
+- The button container must use absolute positioning 
+  pinned to the bottom, OR be placed OUTSIDE and BELOW 
+  the SectionList as a sibling View, so it always 
+  floats above content without being part of the scroll.
+  Preferred structure:
+
+  <View style={{ flex: 1, backgroundColor: '#0F0F0F' }}>
+    <ScreenHeader title="History" />
+    
+    {/* filter bar for history — see FIX 5 below */}
+    
+    <SectionList
+      style={{ flex: 1 }}
+      contentContainerStyle={{ paddingBottom: 16 }}
+      ...
+    />
+    
+    {/* Clear button — solid bg, never transparent */}
+    <View style={{
+      backgroundColor: '#0F0F0F',
+      borderTopWidth: 1,
+      borderTopColor: '#242424',
+      paddingHorizontal: 16,
+      paddingTop: 12,
+      paddingBottom: insets.bottom + 12,
+    }}>
+      <TouchableOpacity style={styles.clearBtn} onPress={confirmClear}>
+        <Text style={styles.clearBtnText}>Clear History</Text>
+      </TouchableOpacity>
+    </View>
+  </View>
+
+- clearBtn style:
+    borderWidth: 1,
+    borderColor: '#EF4444',
+    borderRadius: 10,
+    paddingVertical: 14,
+    alignItems: 'center',
+    backgroundColor: '#0F0F0F',   // solid, matches screen
+
+---
+
+## FIX 5: History tab — date filter for completed/cancelled tasks
+
+Add a lightweight, optional filter system to the History screen. 
+It must be compact so it never pushes the header off screen.
+
+**Data model addition:**
+No AsyncStorage changes needed — filter state is local 
+(resets when user leaves the tab, which is fine).
+
+**Local state in HistoryScreen:**
+  const [statusFilter, setStatusFilter] = 
+    useState('all');  // 'all' | 'completed' | 'cancelled'
+  const [dateFilter, setDateFilter] = 
+    useState('all');  // 'all' | 'today' | 'thisWeek' | 'thisMonth'
+
+**UI — two compact filter rows below the ScreenHeader:**
+
+Row 1 — Status pills (horizontal, 3 options):
+  [All]  [✓ Completed]  [✕ Cancelled]
+
+Row 2 — Date pills (horizontal, 4 options):
+  [All time]  [Today]  [This week]  [This month]
+
+Both rows use the same pill style as the main filter bar:
+  - Active: backgroundColor: '#6366F1', text: '#FFFFFF'
+  - Inactive: backgroundColor: 'transparent', 
+    borderWidth: 1, borderColor: '#333333', text: '#9CA3AF'
+  - paddingHorizontal: 12, paddingVertical: 6, borderRadius: 20
+  - fontSize: 13 (slightly smaller than main filter to stay compact)
+
+Wrap both rows in a View with:
+  backgroundColor: '#0F0F0F',
+  paddingVertical: 8,
+  borderBottomWidth: 1,
+  borderBottomColor: '#242424',
+
+**Filtering logic (computed from history tasks, no API call):**
+
+  const filteredHistory = useMemo(() => {
+    return historyTasks.filter(task => {
+      // Status filter
+      if (statusFilter !== 'all' && task.status !== statusFilter) 
+        return false;
+      
+      // Date filter based on task.completedAt or task.cancelledAt
+      const eventDate = new Date(task.completedAt || task.cancelledAt);
+      const now = new Date();
+      
+      if (dateFilter === 'today') {
+        return isSameDay(eventDate, now);
+      }
+      if (dateFilter === 'thisWeek') {
+        const weekAgo = new Date(now);
+        weekAgo.setDate(now.getDate() - 7);
+        return eventDate >= weekAgo;
+      }
+      if (dateFilter === 'thisMonth') {
+        return eventDate.getMonth() === now.getMonth() && 
+               eventDate.getFullYear() === now.getFullYear();
+      }
+      return true; // 'all'
+    });
+  }, [historyTasks, statusFilter, dateFilter]);
+
+  // Helper:
+  function isSameDay(a, b) {
+    return a.getFullYear() === b.getFullYear() &&
+           a.getMonth() === b.getMonth() &&
+           a.getDate() === b.getDate();
+  }
+
+**Grouping:**
+After filtering, group by date of completedAt/cancelledAt 
+(same day grouping as main task list) and render in SectionList 
+with section headers like "Today", "Yesterday", "Mon 23 Jun".
+
+**Switching filters must be instant** — since filteredHistory 
+is a useMemo derived value, it recomputes synchronously on 
+state change with no async operation, guaranteeing 
+instant UI updates.
+
+**Empty state:**
+If filteredHistory is empty after filtering, show:
+  <EmptyState message="No history matches this filter." />
+
+The filter rows must NOT scroll away — place them as 
+siblings of the SectionList, NOT inside ListHeaderComponent, 
+using the same pattern as FIX 3.
+
+---
+
+## CONSTRAINTS FOR ALL FIXES
+- Read each file before editing it.
+- Do not change any task logic, AsyncStorage keys, 
+  notification code, bypass logic, or settings values.
+- Do not install any new packages — everything needed 
+  is already available.
+- After changes, validate mentally for:
+    iPhone SE (375pt wide, insets.top ≈ 20)
+    iPhone 14 Pro (393pt wide, insets.top ≈ 59)
+    iPhone 15 Pro Max (430pt wide, insets.top ≈ 59)
+- Every piece of visible text must be fully readable 
+  without truncation on all three sizes above.
+- Do not touch ScreenHeader.tsx — it is already 
+  correct from the previous fix.

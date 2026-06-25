@@ -1,6 +1,6 @@
-// Main task list screen — grouped by date, filterable, paginated, with Add Task and Detail modals.
-// Safe area is handled manually via ScreenHeader (paddingTop: insets.top + 8).
-// headerShown: false is set in the tab _layout so we own the full screen top-to-bottom.
+// Main task list screen — grouped by date, filterable, paginated.
+// FIX 3: FilterBar is a sibling of SectionList (NOT inside ListHeaderComponent),
+// SectionList has flex:1 so ONLY it scrolls; header + filter bar stay pinned.
 import React, { useMemo, useState } from 'react';
 import {
   Platform, Pressable, SectionList, StyleSheet, Text, View,
@@ -22,7 +22,6 @@ import { todayISO, withinDays, formatDayLabel } from '@/utils/dateHelpers';
 const URGENCY_ORDER = { high: 0, medium: 1, low: 2 };
 const PAGE_SIZE = 10;
 
-// "What's first?" title with the "?" in accent colour
 function HomeTitle() {
   const c = useColors();
   return (
@@ -44,7 +43,6 @@ export default function TasksScreen() {
   const [page, setPage] = useState(1);
 
   const today = todayISO();
-  const isWeb = Platform.OS === 'web';
 
   // Filter active tasks
   const filtered = useMemo(() => {
@@ -59,19 +57,20 @@ export default function TasksScreen() {
   }, [tasks, filter, today]);
 
   // Sort: by dueDate ASC, within each date by urgency
-  const sorted = useMemo(() => {
-    return [...filtered].sort((a, b) => {
+  const sorted = useMemo(() =>
+    [...filtered].sort((a, b) => {
       const dComp = a.dueDate.localeCompare(b.dueDate);
       if (dComp !== 0) return dComp;
       return URGENCY_ORDER[a.urgency] - URGENCY_ORDER[b.urgency];
-    });
-  }, [filtered]);
+    }),
+    [filtered]
+  );
 
-  // Paginate flat list, then group
   const paginated = sorted.slice(0, page * PAGE_SIZE);
   const hasMore = sorted.length > paginated.length;
   const totalCount = sorted.length;
   const shownCount = paginated.length;
+  const remaining = sorted.length - paginated.length;
 
   // Group into sections by dueDate
   const sections = useMemo(() => {
@@ -93,41 +92,48 @@ export default function TasksScreen() {
     setPage(1);
   }
 
-  // Tab bar is ~49pt + bottom inset; FAB floats above it
+  // Tab bar ≈ 49pt + bottom inset; FAB floats above it
   const tabBarHeight = 49 + insets.bottom;
-  const bottomPad = tabBarHeight + 16;
   const fabBottom = tabBarHeight + 12;
+  const listBottomPad = tabBarHeight + 24;
 
   return (
     <View style={[styles.container, { backgroundColor: c.background }]}>
 
-      {/* Safe-area-aware header — clears notch / Dynamic Island on any iPhone */}
+      {/* 1. Safe-area-aware header — NEVER scrolls */}
       <ScreenHeader
         titleNode={<HomeTitle />}
         rightContent={<BypassButton />}
       />
 
-      {/* Surveillance off banner */}
+      {/* 2. Surveillance off banner — NEVER scrolls */}
       {!settings.surveillanceEnabled && (
         <View style={[styles.banner, { backgroundColor: '#F97316' }]}>
-          <Text style={styles.bannerText}>Surveillance off — your apps are not being monitored.</Text>
+          <Text style={styles.bannerText}>
+            Surveillance off — your apps are not being monitored.
+          </Text>
         </View>
       )}
 
-      {/* Filter bar — below header, never clipped */}
-      <FilterBar active={filter} onChange={resetPagination} />
+      {/* 3. Filter bar — NEVER scrolls, always pinned below header.
+              It is a SIBLING of SectionList, NOT inside ListHeaderComponent. */}
+      <View style={[styles.filterBarWrapper, { backgroundColor: c.background, borderBottomColor: c.border }]}>
+        <FilterBar active={filter} onChange={resetPagination} />
+      </View>
 
-      {/* Task count */}
+      {/* 4. Task count — pinned, never scrolls */}
       {totalCount > 0 && (
         <Text style={[styles.countLabel, { color: c.mutedForeground }]}>
-          Showing {shownCount} of {totalCount} tasks
+          Showing {shownCount} of {totalCount} task{totalCount !== 1 ? 's' : ''}
         </Text>
       )}
 
+      {/* 5. SectionList — THIS IS THE ONLY THING THAT SCROLLS */}
       <SectionList
+        style={styles.list}
         sections={sections}
         keyExtractor={(item) => item.id}
-        contentContainerStyle={{ paddingBottom: bottomPad, paddingTop: 4 }}
+        contentContainerStyle={{ paddingBottom: listBottomPad, paddingTop: 4 }}
         renderSectionHeader={({ section }) => (
           <View style={[styles.sectionHeader, { backgroundColor: c.background }]}>
             <Text style={[styles.sectionTitle, { color: c.foreground }]}>{section.title}</Text>
@@ -137,21 +143,23 @@ export default function TasksScreen() {
           <TaskCard task={item} onPressDetail={setDetailTask} />
         )}
         ListEmptyComponent={
-          <EmptyState message={`Nothing here — What's first?`} />
+          <EmptyState message="Nothing here — What's first?" />
         }
         ListFooterComponent={hasMore ? (
           <Pressable
             style={[styles.loadMoreBtn, { borderColor: c.border, backgroundColor: c.card }]}
             onPress={() => setPage((p) => p + 1)}
           >
-            <Text style={[styles.loadMoreText, { color: c.primary }]}>Load more</Text>
+            <Text style={[styles.loadMoreText, { color: c.primary }]}>
+              Load {remaining} more
+            </Text>
           </Pressable>
         ) : null}
         stickySectionHeadersEnabled
         showsVerticalScrollIndicator={false}
       />
 
-      {/* FAB — floats above tab bar */}
+      {/* 6. FAB — floats above tab bar */}
       <Pressable
         style={[styles.fab, { backgroundColor: c.primary, bottom: fabBottom }]}
         onPress={() => setAddVisible(true)}
@@ -170,10 +178,23 @@ const styles = StyleSheet.create({
   titleText: { fontSize: 22, fontFamily: 'Inter_700Bold' },
   banner: { paddingHorizontal: 16, paddingVertical: 10 },
   bannerText: { color: '#fff', fontSize: 13, fontFamily: 'Inter_500Medium', textAlign: 'center' },
-  countLabel: { fontSize: 12, fontFamily: 'Inter_400Regular', paddingHorizontal: 16, paddingBottom: 2, paddingTop: 2 },
+  // FIX 3: Pinned filter bar wrapper with solid bg + bottom border
+  filterBarWrapper: {
+    borderBottomWidth: 1,
+    zIndex: 10,
+  },
+  countLabel: {
+    fontSize: 12, fontFamily: 'Inter_400Regular',
+    paddingHorizontal: 16, paddingVertical: 6,
+  },
+  // FIX 3: flex:1 ensures ONLY the list scrolls
+  list: { flex: 1 },
   sectionHeader: { paddingHorizontal: 16, paddingVertical: 8 },
   sectionTitle: { fontSize: 13, fontFamily: 'Inter_700Bold', textTransform: 'uppercase', letterSpacing: 0.8 },
-  loadMoreBtn: { marginHorizontal: 16, marginVertical: 10, borderRadius: 12, borderWidth: 1, paddingVertical: 12, alignItems: 'center' },
+  loadMoreBtn: {
+    marginHorizontal: 16, marginVertical: 10,
+    borderRadius: 12, borderWidth: 1, paddingVertical: 12, alignItems: 'center',
+  },
   loadMoreText: { fontSize: 14, fontFamily: 'Inter_600SemiBold' },
   fab: {
     position: 'absolute',
