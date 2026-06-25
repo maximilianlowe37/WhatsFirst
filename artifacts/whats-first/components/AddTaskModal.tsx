@@ -1,11 +1,18 @@
 // Add Task bottom sheet modal.
-// FIX 1: Date picker collapsed by default — shows formatted pill, expands on tap.
-// FIX 2: Subtask input auto-focuses after each addition via ref + setTimeout.
-import React, { useRef, useState } from 'react';
+// CHANGE 2: Robust subtask auto-focus — inputRefs + focusedSubtaskId + useEffect (50ms).
+//   Each subtask is an editable TextInput with its own ref.
+// CHANGE 4: Draggable handle — Reanimated 3 + GestureDetector Gesture.Pan().
+//   HALF snap (default) and FULL snap; fast downward swipe dismisses.
+// FIX 1 (prev): Date picker collapsed by default — pill chip shows date, expands on tap.
+import React, { useEffect, useRef, useState } from 'react';
 import {
-  KeyboardAvoidingView, Modal, Platform, Pressable, ScrollView,
-  StyleSheet, Text, TextInput, View,
+  Dimensions, KeyboardAvoidingView, Modal, Platform, Pressable,
+  ScrollView, StyleSheet, Text, TextInput, TouchableWithoutFeedback, View,
 } from 'react-native';
+import Animated, {
+  useSharedValue, useAnimatedStyle, withSpring, runOnJS,
+} from 'react-native-reanimated';
+import { Gesture, GestureDetector } from 'react-native-gesture-handler';
 import DateTimePicker from '@react-native-community/datetimepicker';
 import { Feather } from '@expo/vector-icons';
 import * as Haptics from 'expo-haptics';
@@ -14,10 +21,10 @@ import { useTasks } from '@/contexts/TasksContext';
 import { Urgency } from '@/types';
 import { todayISO, tomorrowISO, inDaysISO, toISO } from '@/utils/dateHelpers';
 
-interface Props {
-  visible: boolean;
-  onClose: () => void;
-}
+// ─── Constants ─────────────────────────────────────────────────────────────────
+const { height: SCREEN_HEIGHT } = Dimensions.get('window');
+const HALF = SCREEN_HEIGHT * 0.55;
+const FULL = SCREEN_HEIGHT * 0.92;
 
 const URGENCY_OPTIONS: { key: Urgency; label: string; color: string }[] = [
   { key: 'low', label: 'Low', color: '#22C55E' },
@@ -25,7 +32,11 @@ const URGENCY_OPTIONS: { key: Urgency; label: string; color: string }[] = [
   { key: 'high', label: 'High', color: '#EF4444' },
 ];
 
-// FIX 1: Human-readable date label for the collapsed chip.
+// ─── Helpers ───────────────────────────────────────────────────────────────────
+function uid(): string {
+  return Date.now().toString(36) + Math.random().toString(36).slice(2);
+}
+
 function formatDueLabel(dateStr: string): string {
   const today = new Date();
   today.setHours(0, 0, 0, 0);
@@ -37,24 +48,97 @@ function formatDueLabel(dateStr: string): string {
   return '📅 ' + d.toLocaleDateString('en-GB', { weekday: 'short', day: 'numeric', month: 'short' });
 }
 
+interface SubtaskDraft {
+  id: string;
+  title: string;
+}
+
+interface Props {
+  visible: boolean;
+  onClose: () => void;
+}
+
+// ─── Component ─────────────────────────────────────────────────────────────────
 export function AddTaskModal({ visible, onClose }: Props) {
   const c = useColors();
   const { addTask } = useTasks();
-  const [title, setTitle] = useState('');
-  const [urgency, setUrgency] = useState<Urgency>('medium');
-  const [dueDate, setDueDate] = useState(todayISO());
-  const [dateObj, setDateObj] = useState(new Date());
-  // FIX 1: picker hidden by default, revealed on chip tap
-  const [showDatePicker, setShowDatePicker] = useState(false);
-  const [showSubtasks, setShowSubtasks] = useState(false);
-  const [subtasks, setSubtasks] = useState<string[]>([]);
-  const [subtaskInput, setSubtaskInput] = useState('');
-  // FIX 2: ref for auto-focus after adding a subtask
-  const subtaskInputRef = useRef<TextInput>(null);
   const isIOS = Platform.OS === 'ios';
   const isAndroid = Platform.OS === 'android';
   const isWeb = Platform.OS === 'web';
 
+  // Form state
+  const [title, setTitle] = useState('');
+  const [urgency, setUrgency] = useState<Urgency>('medium');
+  const [dueDate, setDueDate] = useState(todayISO());
+  const [dateObj, setDateObj] = useState(new Date());
+  const [showDatePicker, setShowDatePicker] = useState(false);
+  const [showSubtasks, setShowSubtasks] = useState(false);
+
+  // CHANGE 2: Subtasks as individual draft items with their own refs
+  const [subtasks, setSubtasks] = useState<SubtaskDraft[]>([]);
+  const [focusedSubtaskId, setFocusedSubtaskId] = useState<string | null>(null);
+  const inputRefs = useRef<Record<string, TextInput | null>>({});
+  const scrollViewRef = useRef<ScrollView>(null);
+
+  // CHANGE 2: useEffect watching focusedSubtaskId — 50ms timeout to ensure the
+  // ref is mounted before focus is called.
+  useEffect(() => {
+    if (!focusedSubtaskId) return;
+    const t = setTimeout(() => {
+      const ref = inputRefs.current[focusedSubtaskId];
+      if (ref) {
+        ref.focus();
+        setFocusedSubtaskId(null);
+        scrollViewRef.current?.scrollToEnd({ animated: true });
+      }
+    }, 50);
+    return () => clearTimeout(t);
+  }, [focusedSubtaskId]);
+
+  // CHANGE 4: Draggable sheet animation
+  const translateY = useSharedValue(SCREEN_HEIGHT - HALF);
+  const startY = useSharedValue(0);
+
+  // Reset sheet position every time the modal opens
+  useEffect(() => {
+    if (visible) {
+      translateY.value = SCREEN_HEIGHT - HALF;
+    }
+  }, [visible]);
+
+  const animatedStyle = useAnimatedStyle(() => ({
+    transform: [{ translateY: translateY.value }],
+  }));
+
+  const panGesture = Gesture.Pan()
+    .activeOffsetY([-5, 5])
+    .onStart(() => {
+      startY.value = translateY.value;
+    })
+    .onUpdate((event) => {
+      const newY = startY.value + event.translationY;
+      translateY.value = Math.max(
+        SCREEN_HEIGHT - FULL,
+        Math.min(SCREEN_HEIGHT - HALF * 0.7, newY)
+      );
+    })
+    .onEnd((event) => {
+      const midPoint = SCREEN_HEIGHT - ((FULL - HALF) / 2 + HALF);
+      if (event.velocityY < -500 || translateY.value < midPoint) {
+        // Snap to FULL
+        translateY.value = withSpring(SCREEN_HEIGHT - FULL, { damping: 20, stiffness: 200 });
+      } else if (event.velocityY > 1000) {
+        // Fast downward — dismiss
+        translateY.value = withSpring(SCREEN_HEIGHT, { damping: 20, stiffness: 200 }, () =>
+          runOnJS(handleClose)()
+        );
+      } else {
+        // Snap back to HALF
+        translateY.value = withSpring(SCREEN_HEIGHT - HALF, { damping: 20, stiffness: 200 });
+      }
+    });
+
+  // ─── Handlers ───────────────────────────────────────────────────────────────
   function reset() {
     setTitle('');
     setUrgency('medium');
@@ -63,7 +147,7 @@ export function AddTaskModal({ visible, onClose }: Props) {
     setShowDatePicker(false);
     setShowSubtasks(false);
     setSubtasks([]);
-    setSubtaskInput('');
+    setFocusedSubtaskId(null);
   }
 
   function handleClose() {
@@ -74,7 +158,6 @@ export function AddTaskModal({ visible, onClose }: Props) {
   function selectPreset(iso: string) {
     setDueDate(iso);
     setDateObj(new Date(iso + 'T12:00:00'));
-    // Collapse picker when a quick preset is chosen
     setShowDatePicker(false);
   }
 
@@ -86,22 +169,32 @@ export function AddTaskModal({ visible, onClose }: Props) {
     }
   }
 
-  // FIX 2: add subtask and auto-focus the input for the next one
-  function addSubtask() {
-    if (!subtaskInput.trim()) return;
-    setSubtasks((prev) => [...prev, subtaskInput.trim()]);
-    setSubtaskInput('');
-    setTimeout(() => subtaskInputRef.current?.focus(), 50);
+  // CHANGE 2: Add empty subtask and trigger focus via useEffect
+  function handleAddSubtask() {
+    if (!showSubtasks) setShowSubtasks(true);
+    const newId = uid();
+    setSubtasks((prev) => [...prev, { id: newId, title: '' }]);
+    setFocusedSubtaskId(newId);
   }
 
-  function removeSubtask(idx: number) {
-    setSubtasks((prev) => prev.filter((_, i) => i !== idx));
+  function updateSubtask(id: string, title: string) {
+    setSubtasks((prev) => prev.map((s) => s.id === id ? { ...s, title } : s));
+  }
+
+  function removeSubtask(id: string) {
+    setSubtasks((prev) => prev.filter((s) => s.id !== id));
+    delete inputRefs.current[id];
   }
 
   function handleSubmit() {
     if (!title.trim()) return;
     Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
-    addTask({ title, urgency, dueDate, subtasks });
+    addTask({
+      title: title.trim(),
+      urgency,
+      dueDate,
+      subtasks: subtasks.map((s) => s.title).filter(Boolean),
+    });
     handleClose();
   }
 
@@ -111,189 +204,192 @@ export function AddTaskModal({ visible, onClose }: Props) {
     { label: 'In 2 days', value: inDaysISO(2) },
   ];
 
+  // ─── Render ──────────────────────────────────────────────────────────────────
   return (
-    <Modal visible={visible} transparent animationType="slide" onRequestClose={handleClose}>
-      <Pressable style={styles.overlay} onPress={handleClose}>
-        <KeyboardAvoidingView behavior={isIOS ? 'padding' : undefined} style={styles.kav}>
-          <Pressable style={[styles.sheet, { backgroundColor: c.card, borderColor: c.border }]}>
-            <View style={[styles.handle, { backgroundColor: c.border }]} />
+    <Modal visible={visible} transparent animationType="none" onRequestClose={handleClose}>
+      {/* Backdrop — tap to close */}
+      <TouchableWithoutFeedback onPress={handleClose}>
+        <View style={[StyleSheet.absoluteFill, styles.backdrop]} />
+      </TouchableWithoutFeedback>
+
+      {/* CHANGE 4: Animated draggable sheet */}
+      <Animated.View style={[styles.sheet, { backgroundColor: c.card }, animatedStyle]}>
+
+        {/* Handle area — ONLY this area responds to drag, not the ScrollView */}
+        <GestureDetector gesture={panGesture}>
+          <Animated.View style={styles.handleArea}>
+            <View style={[styles.handle, { backgroundColor: '#555555' }]} />
             <Text style={[styles.sheetTitle, { color: c.foreground }]}>New task</Text>
+          </Animated.View>
+        </GestureDetector>
 
-            <ScrollView showsVerticalScrollIndicator={false} keyboardShouldPersistTaps="handled">
-              {/* Title */}
-              <TextInput
-                style={[styles.titleInput, { backgroundColor: c.surface, color: c.foreground, borderColor: c.border }]}
-                value={title}
-                onChangeText={setTitle}
-                placeholder="What needs to be done?"
-                placeholderTextColor={c.mutedForeground}
-                autoFocus
-                returnKeyType="done"
-              />
+        {/* CHANGE 2: KAV wraps form so keyboard lifts content */}
+        <KeyboardAvoidingView
+          behavior={isIOS ? 'padding' : 'height'}
+          style={{ flex: 1 }}
+          keyboardVerticalOffset={0}
+        >
+          <ScrollView
+            ref={scrollViewRef}
+            style={{ flex: 1 }}
+            contentContainerStyle={styles.formContent}
+            keyboardShouldPersistTaps="handled"
+            showsVerticalScrollIndicator={false}
+          >
+            {/* Title */}
+            <TextInput
+              style={[styles.titleInput, { backgroundColor: c.surface, color: c.foreground, borderColor: c.border }]}
+              value={title}
+              onChangeText={setTitle}
+              placeholder="What needs to be done?"
+              placeholderTextColor={c.mutedForeground}
+              autoFocus
+              returnKeyType="done"
+            />
 
-              {/* Urgency */}
-              <Text style={[styles.sectionLabel, { color: c.mutedForeground }]}>Urgency</Text>
-              <View style={styles.urgencyRow}>
-                {URGENCY_OPTIONS.map((opt) => (
+            {/* Urgency */}
+            <Text style={[styles.sectionLabel, { color: c.mutedForeground }]}>Urgency</Text>
+            <View style={styles.urgencyRow}>
+              {URGENCY_OPTIONS.map((opt) => (
+                <Pressable
+                  key={opt.key}
+                  style={[styles.urgencyPill, { borderColor: opt.color, backgroundColor: urgency === opt.key ? opt.color : 'transparent' }]}
+                  onPress={() => setUrgency(opt.key)}
+                >
+                  <View style={[styles.dot, { backgroundColor: urgency === opt.key ? '#fff' : opt.color }]} />
+                  <Text style={[styles.urgencyLabel, { color: urgency === opt.key ? '#fff' : opt.color }]}>
+                    {opt.label}
+                  </Text>
+                </Pressable>
+              ))}
+            </View>
+
+            {/* Due date */}
+            <Text style={[styles.sectionLabel, { color: c.mutedForeground }]}>Due date</Text>
+            <View style={styles.dateRow}>
+              {presets.map((opt) => {
+                const selected = dueDate === opt.value;
+                return (
                   <Pressable
-                    key={opt.key}
-                    style={[
-                      styles.urgencyPill,
-                      { borderColor: opt.color, backgroundColor: urgency === opt.key ? opt.color : 'transparent' },
-                    ]}
-                    onPress={() => setUrgency(opt.key)}
+                    key={opt.value}
+                    style={[styles.datePill, { borderColor: selected ? c.primary : c.border, backgroundColor: selected ? c.primary : 'transparent' }]}
+                    onPress={() => selectPreset(opt.value)}
                   >
-                    <View style={[styles.dot, { backgroundColor: urgency === opt.key ? '#fff' : opt.color }]} />
-                    <Text style={[styles.urgencyLabel, { color: urgency === opt.key ? '#fff' : opt.color }]}>
+                    <Text style={[styles.datePillText, { color: selected ? '#fff' : c.mutedForeground }]}>
                       {opt.label}
                     </Text>
                   </Pressable>
-                ))}
-              </View>
-
-              {/* Due date */}
-              <Text style={[styles.sectionLabel, { color: c.mutedForeground }]}>Due date</Text>
-
-              {/* Quick presets */}
-              <View style={styles.dateRow}>
-                {presets.map((opt) => {
-                  const selected = dueDate === opt.value;
-                  return (
-                    <Pressable
-                      key={opt.value}
-                      style={[
-                        styles.datePill,
-                        { borderColor: selected ? c.primary : c.border, backgroundColor: selected ? c.primary : 'transparent' },
-                      ]}
-                      onPress={() => selectPreset(opt.value)}
-                    >
-                      <Text style={[styles.datePillText, { color: selected ? '#fff' : c.mutedForeground }]}>
-                        {opt.label}
-                      </Text>
-                    </Pressable>
-                  );
-                })}
-              </View>
-
-              {/* FIX 1: Collapsed date chip + expand/collapse controls */}
-              <View style={styles.dateChipRow}>
-                <Pressable
-                  style={[styles.dateChip, { backgroundColor: c.surface, borderColor: c.border }]}
-                  onPress={() => setShowDatePicker((v) => !v)}
-                >
-                  <Text style={[styles.dateChipText, { color: c.foreground }]}>
-                    {formatDueLabel(dueDate)}
-                  </Text>
-                  <Feather name={showDatePicker ? 'chevron-up' : 'chevron-down'} size={14} color={c.mutedForeground} />
-                </Pressable>
-                {showDatePicker && isIOS && (
-                  <Pressable onPress={() => setShowDatePicker(false)} style={styles.doneBtn}>
-                    <Text style={[styles.doneBtnText, { color: c.primary }]}>Done</Text>
-                  </Pressable>
-                )}
-              </View>
-
-              {/* FIX 1: Date picker — only shown after tapping chip */}
-              {showDatePicker && (
-                <>
-                  {isIOS && (
-                    <DateTimePicker
-                      value={dateObj}
-                      mode="date"
-                      display="spinner"
-                      locale="en-GB"
-                      onChange={handleDateChange}
-                      style={styles.iosPicker}
-                      textColor="#ffffff"
-                      accentColor="#6366F1"
-                    />
-                  )}
-                  {isAndroid && (
-                    <DateTimePicker
-                      value={dateObj}
-                      mode="date"
-                      display="default"
-                      onChange={handleDateChange}
-                    />
-                  )}
-                  {isWeb && (
-                    <TextInput
-                      style={[styles.webDateInput, { backgroundColor: c.surface, color: c.foreground, borderColor: c.border }]}
-                      value={dueDate}
-                      onChangeText={(v) => setDueDate(v)}
-                      placeholder="YYYY-MM-DD"
-                      placeholderTextColor={c.mutedForeground}
-                    />
-                  )}
-                </>
-              )}
-
-              {/* Subtasks toggle */}
-              <Pressable style={styles.subtasksToggle} onPress={() => setShowSubtasks((v) => !v)}>
-                <Feather name={showSubtasks ? 'minus-circle' : 'plus-circle'} size={16} color={c.primary} />
-                <Text style={[styles.subtasksToggleText, { color: c.primary }]}>
-                  {showSubtasks ? 'Hide subtasks' : 'Add subtasks'}
-                </Text>
+                );
+              })}
+            </View>
+            <View style={styles.dateChipRow}>
+              <Pressable
+                style={[styles.dateChip, { backgroundColor: c.surface, borderColor: c.border }]}
+                onPress={() => setShowDatePicker((v) => !v)}
+              >
+                <Text style={[styles.dateChipText, { color: c.foreground }]}>{formatDueLabel(dueDate)}</Text>
+                <Feather name={showDatePicker ? 'chevron-up' : 'chevron-down'} size={14} color={c.mutedForeground} />
               </Pressable>
+              {showDatePicker && isIOS && (
+                <Pressable onPress={() => setShowDatePicker(false)} style={styles.doneBtn}>
+                  <Text style={[styles.doneBtnText, { color: c.primary }]}>Done</Text>
+                </Pressable>
+              )}
+            </View>
+            {showDatePicker && (
+              <>
+                {isIOS && (
+                  <DateTimePicker
+                    value={dateObj} mode="date" display="spinner" locale="en-GB"
+                    onChange={handleDateChange} style={styles.iosPicker}
+                    textColor="#ffffff" accentColor="#6366F1"
+                  />
+                )}
+                {isAndroid && (
+                  <DateTimePicker value={dateObj} mode="date" display="default" onChange={handleDateChange} />
+                )}
+                {isWeb && (
+                  <TextInput
+                    style={[styles.webDateInput, { backgroundColor: c.surface, color: c.foreground, borderColor: c.border }]}
+                    value={dueDate} onChangeText={setDueDate}
+                    placeholder="YYYY-MM-DD" placeholderTextColor={c.mutedForeground}
+                  />
+                )}
+              </>
+            )}
 
-              {showSubtasks && (
-                <View style={styles.subtasksSection}>
-                  {subtasks.map((s, i) => (
-                    <View key={i} style={[styles.subtaskItem, { backgroundColor: c.surface, borderColor: c.border }]}>
-                      <Text style={[styles.subtaskItemText, { color: c.foreground }]} numberOfLines={1}>{s}</Text>
-                      <Pressable onPress={() => removeSubtask(i)}>
-                        <Feather name="x" size={14} color={c.mutedForeground} />
-                      </Pressable>
-                    </View>
-                  ))}
-                  {/* FIX 2: ref on input + auto-focus on addSubtask */}
-                  <View style={styles.subtaskInputRow}>
+            {/* Subtasks */}
+            <Pressable style={styles.subtasksToggle} onPress={handleAddSubtask}>
+              <Feather name="plus-circle" size={16} color={c.primary} />
+              <Text style={[styles.subtasksToggleText, { color: c.primary }]}>Add subtask</Text>
+            </Pressable>
+
+            {showSubtasks && subtasks.length > 0 && (
+              <View style={styles.subtasksSection}>
+                {/* CHANGE 2: Each subtask is a live TextInput with its own ref */}
+                {subtasks.map((s) => (
+                  <View key={s.id} style={[styles.subtaskRow, { backgroundColor: c.surface, borderColor: c.border }]}>
                     <TextInput
-                      ref={subtaskInputRef}
-                      style={[styles.subtaskInput, { backgroundColor: c.surface, color: c.foreground, borderColor: c.border }]}
-                      value={subtaskInput}
-                      onChangeText={setSubtaskInput}
-                      placeholder="Add a subtask…"
+                      ref={(el) => { inputRefs.current[s.id] = el; }}
+                      style={[styles.subtaskInput, { color: c.foreground }]}
+                      value={s.title}
+                      onChangeText={(v) => updateSubtask(s.id, v)}
+                      placeholder="Subtask title"
                       placeholderTextColor={c.mutedForeground}
-                      returnKeyType="done"
-                      onSubmitEditing={addSubtask}
                       blurOnSubmit={false}
+                      returnKeyType="done"
+                      onSubmitEditing={handleAddSubtask}
+                      autoCorrect={false}
                     />
-                    <Pressable style={[styles.subtaskAddBtn, { backgroundColor: c.primary }]} onPress={addSubtask}>
-                      <Feather name="plus" size={16} color="#fff" />
+                    <Pressable onPress={() => removeSubtask(s.id)} hitSlop={8}>
+                      <Feather name="x" size={14} color={c.mutedForeground} />
                     </Pressable>
                   </View>
-                </View>
-              )}
+                ))}
+              </View>
+            )}
 
-              {/* Submit */}
-              <Pressable
-                style={[styles.submitBtn, { backgroundColor: title.trim() ? c.primary : c.surface, opacity: title.trim() ? 1 : 0.5 }]}
-                onPress={handleSubmit}
-                disabled={!title.trim()}
-              >
-                <Text style={[styles.submitText, { color: title.trim() ? '#fff' : c.mutedForeground }]}>
-                  Add task
-                </Text>
-              </Pressable>
-            </ScrollView>
-          </Pressable>
+            {/* Submit */}
+            <Pressable
+              style={[styles.submitBtn, { backgroundColor: title.trim() ? c.primary : c.surface, opacity: title.trim() ? 1 : 0.5 }]}
+              onPress={handleSubmit}
+              disabled={!title.trim()}
+            >
+              <Text style={[styles.submitText, { color: title.trim() ? '#fff' : c.mutedForeground }]}>
+                Add task
+              </Text>
+            </Pressable>
+          </ScrollView>
         </KeyboardAvoidingView>
-      </Pressable>
+      </Animated.View>
     </Modal>
   );
 }
 
 const styles = StyleSheet.create({
-  overlay: { flex: 1, justifyContent: 'flex-end', backgroundColor: 'rgba(0,0,0,0.6)' },
-  kav: { justifyContent: 'flex-end' },
+  backdrop: { backgroundColor: 'rgba(0,0,0,0.55)' },
+  // CHANGE 4: Sheet is position:absolute, full height in DOM, translateY controls visibility
   sheet: {
-    borderTopLeftRadius: 24, borderTopRightRadius: 24,
-    borderWidth: 1, borderBottomWidth: 0,
-    padding: 20, paddingBottom: 40, maxHeight: '92%',
+    position: 'absolute',
+    left: 0, right: 0, bottom: 0,
+    height: FULL,
+    borderTopLeftRadius: 20,
+    borderTopRightRadius: 20,
+    overflow: 'hidden',
   },
-  handle: { width: 36, height: 4, borderRadius: 2, alignSelf: 'center', marginBottom: 16 },
-  sheetTitle: { fontSize: 20, fontFamily: 'Inter_700Bold', marginBottom: 16 },
+  // CHANGE 4: Handle area is the only draggable zone
+  handleArea: {
+    width: '100%',
+    paddingTop: 12,
+    paddingBottom: 10,
+    paddingHorizontal: 20,
+    alignItems: 'center',
+    minHeight: 44,
+    gap: 10,
+  },
+  handle: { width: 36, height: 4, borderRadius: 2 },
+  sheetTitle: { fontSize: 20, fontFamily: 'Inter_700Bold', alignSelf: 'flex-start' },
+  formContent: { paddingHorizontal: 20, paddingBottom: 40, gap: 0 },
   titleInput: {
     borderRadius: 12, borderWidth: 1, padding: 14,
     fontSize: 16, fontFamily: 'Inter_400Regular', marginBottom: 16,
@@ -312,7 +408,6 @@ const styles = StyleSheet.create({
   dateRow: { flexDirection: 'row', gap: 8, marginBottom: 10 },
   datePill: { paddingHorizontal: 14, paddingVertical: 8, borderRadius: 10, borderWidth: 1 },
   datePillText: { fontSize: 13, fontFamily: 'Inter_500Medium' },
-  // FIX 1: collapsed date chip
   dateChipRow: { flexDirection: 'row', alignItems: 'center', gap: 10, marginBottom: 4 },
   dateChip: {
     flex: 1, flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between',
@@ -326,21 +421,22 @@ const styles = StyleSheet.create({
     borderRadius: 10, borderWidth: 1, padding: 10,
     fontSize: 14, fontFamily: 'Inter_400Regular', marginBottom: 8,
   },
-  subtasksToggle: { flexDirection: 'row', alignItems: 'center', gap: 6, paddingVertical: 10, marginBottom: 4 },
+  subtasksToggle: {
+    flexDirection: 'row', alignItems: 'center', gap: 6,
+    paddingVertical: 12, marginBottom: 4,
+  },
   subtasksToggleText: { fontSize: 14, fontFamily: 'Inter_500Medium' },
   subtasksSection: { gap: 6, marginBottom: 8 },
-  subtaskItem: {
-    flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between',
-    paddingHorizontal: 12, paddingVertical: 8, borderRadius: 8, borderWidth: 1,
+  // CHANGE 2: each subtask is an editable row
+  subtaskRow: {
+    flexDirection: 'row', alignItems: 'center',
+    paddingHorizontal: 12, paddingVertical: 4,
+    borderRadius: 8, borderWidth: 1, gap: 8,
   },
-  subtaskItemText: { flex: 1, fontSize: 13, fontFamily: 'Inter_400Regular', marginRight: 8 },
-  subtaskInputRow: { flexDirection: 'row', gap: 8 },
   subtaskInput: {
-    flex: 1, borderRadius: 8, borderWidth: 1,
-    paddingHorizontal: 12, paddingVertical: 8,
-    fontSize: 14, fontFamily: 'Inter_400Regular',
+    flex: 1, fontSize: 14, fontFamily: 'Inter_400Regular',
+    paddingVertical: 8,
   },
-  subtaskAddBtn: { width: 40, height: 40, borderRadius: 8, alignItems: 'center', justifyContent: 'center' },
   submitBtn: { borderRadius: 14, paddingVertical: 14, alignItems: 'center', marginTop: 16 },
   submitText: { fontSize: 16, fontFamily: 'Inter_700Bold' },
 });

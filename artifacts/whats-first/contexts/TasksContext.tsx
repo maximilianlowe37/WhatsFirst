@@ -46,8 +46,8 @@ export function TasksProvider({ children }: { children: React.ReactNode }) {
   // On Android / web this still writes to AsyncStorage — harmless.
   useEffect(() => {
     if (Platform.OS !== 'ios') return;
-    writeFocusFilterPayload(tasks, settings.surveillanceEnabled).catch(() => {});
-  }, [tasks, settings.surveillanceEnabled]);
+    writeFocusFilterPayload(tasks, true).catch(() => {});
+  }, [tasks]);
 
   const addTask = useCallback(async (data: { title: string; urgency: Urgency; dueDate: string; subtasks: string[] }) => {
     const newTask: Task = {

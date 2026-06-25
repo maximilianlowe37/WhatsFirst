@@ -26,7 +26,6 @@ export function shouldNag(
   now: number = Date.now(),
 ): boolean {
   if (!settings.notificationsEnabled) return false;
-  if (!settings.surveillanceEnabled) return false;
   if (settings.focusNagMinutes < MIN_NAG_MINUTES) return false;
   if (activeTasksDueToday.length <= settings.lowNagLimit) return false;
   if (suppressedUntil !== null && suppressedUntil > now) return false;

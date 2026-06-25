@@ -26,11 +26,6 @@ export interface BypassData {
   month: number; // 0–11
 }
 
-export interface SurveillanceUsage {
-  disabledThisMonth: number;
-  month: number;
-}
-
 export interface BlockedApp {
   id: string;
   name: string;
@@ -45,14 +40,16 @@ export interface BlockedApp {
 export type FocusMessageStyle = 'motivational' | 'minimal' | 'custom';
 
 export interface AppSettings {
-  surveillanceEnabled: boolean;
+  // CHANGE 1: setup + lock fields
+  hasCompletedSetup: boolean;
+  settingsLockedMonth: number; // 0–11 (-1 = never saved)
+  settingsLockedYear: number;  // e.g. 2026
+  // Surveillance is always active — no toggle (CHANGE 3)
   firstInterruptMinutes: number;
   graceMinutes: number;
   blockedApps: BlockedApp[];
   maxBypassPerMonth: number;
-  maxSurveillanceDisablesPerMonth: number;
   notificationsEnabled: boolean;
-  // Focus mode enforcement (Path A — works today through Replit QR)
   focusNagMinutes: number;
   focusNagMessage: FocusMessageStyle;
   lowNagLimit: number;

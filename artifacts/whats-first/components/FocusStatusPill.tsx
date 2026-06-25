@@ -1,11 +1,9 @@
-// FocusStatusPill — small status chip shown under the home title.
-//
+// FocusStatusPill — small status chip shown in the header area.
+// Surveillance is always active (CHANGE 3), so no surveillance-off guard.
 // Three states:
-//   1. nagActive: green "🎯 Focus on — next nudge in ~N min"
-//   2. suppressed (Free Pass): amber "⏸ Focus paused — N min remaining"
-//   3. otherwise (no nag): muted "💤 Focus off"
-// Hidden entirely when surveillance is disabled (the home screen already
-// shows the orange "Surveillance off" banner in that case).
+//   1. nagActive: green "Focus on · next nudge in ~N min"
+//   2. suppressed (Free Pass): amber "Focus paused · N min remaining"
+//   3. otherwise (no nag): hidden (noise-free when nothing is due)
 import React from 'react';
 import { StyleSheet, Text, View } from 'react-native';
 import { Feather } from '@expo/vector-icons';
@@ -25,15 +23,12 @@ export function FocusStatusPill() {
   const { nagActive, dueTodayCount, suppressedUntil } = useFocus();
   const { settings } = useSettings();
 
-  // When surveillance is off, the home screen already shows a warning banner.
-  if (!settings.surveillanceEnabled) return null;
-  // If the user has nothing due today, the pill would just be noise.
+  // Show nothing when user has no tasks due and focus isn't paused
   if (dueTodayCount === 0 && !nagActive && !suppressedUntil) return null;
 
   const suppressed = suppressedUntil !== null && suppressedUntil > Date.now();
   const remaining = suppressed ? (suppressedUntil as number) - Date.now() : 0;
 
-  // Color: primary (green-ish via palette) when active, amber when paused.
   const bg = nagActive ? '#22C55E22' : suppressed ? '#F9731622' : c.surface;
   const border = nagActive ? '#22C55E55' : suppressed ? '#F9731655' : c.border;
   const fg = nagActive ? '#22C55E' : suppressed ? '#F97316' : c.mutedForeground;

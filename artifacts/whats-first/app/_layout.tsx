@@ -1,6 +1,6 @@
-// Root layout — wires up all context providers, font loading, and push notifications.
-// FIX 8: Registers for push notifications on startup and listens for notification responses.
-// Provider order: Settings → Bypass → Tasks (both Bypass and Tasks read from SettingsContext).
+// Root layout — context providers, font loading, push notifications.
+// CHANGE 1: SetupGate shows a full-screen setup Modal on first launch.
+// Provider order: Settings → SetupGate → Bypass → Tasks → Focus.
 import {
   Inter_400Regular,
   Inter_500Medium,
@@ -13,15 +13,18 @@ import * as Notifications from "expo-notifications";
 import { Stack } from "expo-router";
 import * as SplashScreen from "expo-splash-screen";
 import React, { useEffect } from "react";
+import { Modal } from "react-native";
 import { GestureHandlerRootView } from "react-native-gesture-handler";
 import { KeyboardProvider } from "react-native-keyboard-controller";
 import { SafeAreaProvider } from "react-native-safe-area-context";
 
 import { ErrorBoundary } from "@/components/ErrorBoundary";
+import { SetupScreen } from "@/components/SetupScreen";
 import { SettingsProvider } from "@/contexts/SettingsContext";
 import { BypassProvider } from "@/contexts/BypassContext";
 import { TasksProvider } from "@/contexts/TasksContext";
 import { FocusProvider } from "@/contexts/FocusContext";
+import { useSettings } from "@/contexts/SettingsContext";
 import { registerForPushNotifications } from "@/utils/notifications";
 
 SplashScreen.preventAutoHideAsync();
@@ -29,12 +32,10 @@ SplashScreen.preventAutoHideAsync();
 const queryClient = new QueryClient();
 
 function RootLayoutNav() {
-  // FIX 8: Register for push notifications once on mount
   useEffect(() => {
     registerForPushNotifications().catch(() => {});
   }, []);
 
-  // FIX 8: Listen for notification taps — extract taskId from notification data
   useEffect(() => {
     const subscription = Notifications.addNotificationResponseReceivedListener(
       (response) => {
@@ -42,11 +43,7 @@ function RootLayoutNav() {
           taskId?: string;
           kind?: string;
         };
-        // Focus-nag taps: just log for now (deep linking can be added later).
-        if (data.kind === "focus_nag") {
-          console.log("[Notifications] User tapped focus nag");
-          return;
-        }
+        if (data.kind === "focus_nag") return;
         const taskId = data.taskId;
         if (taskId) {
           console.log("[Notifications] User tapped notification for task:", taskId);
@@ -60,6 +57,28 @@ function RootLayoutNav() {
     <Stack screenOptions={{ headerBackTitle: "Back" }}>
       <Stack.Screen name="(tabs)" options={{ headerShown: false }} />
     </Stack>
+  );
+}
+
+// CHANGE 1: SetupGate — renders a blocking Modal over the main app until
+// the user completes first-time setup. Uses a Modal (not route-based) so
+// all providers below still mount and hydrate in the background.
+function SetupGate({ children }: { children: React.ReactNode }) {
+  const { settings, isLoaded } = useSettings();
+  const showSetup = isLoaded && !settings.hasCompletedSetup;
+
+  return (
+    <>
+      {children}
+      <Modal
+        visible={showSetup}
+        animationType="fade"
+        presentationStyle="fullScreen"
+        onRequestClose={() => {/* cannot dismiss without completing setup */}}
+      >
+        <SetupScreen />
+      </Modal>
+    </>
   );
 }
 
@@ -83,20 +102,20 @@ export default function RootLayout() {
     <SafeAreaProvider>
       <ErrorBoundary>
         <QueryClientProvider client={queryClient}>
-          {/* SettingsProvider must be outermost so Bypass + Tasks can read settings */}
           <SettingsProvider>
-            <BypassProvider>
-              <TasksProvider>
-                {/* FocusProvider depends on Settings + Tasks to decide nag state */}
-                <FocusProvider>
-                  <GestureHandlerRootView>
-                    <KeyboardProvider>
-                      <RootLayoutNav />
-                    </KeyboardProvider>
-                  </GestureHandlerRootView>
-                </FocusProvider>
-              </TasksProvider>
-            </BypassProvider>
+            <SetupGate>
+              <BypassProvider>
+                <TasksProvider>
+                  <FocusProvider>
+                    <GestureHandlerRootView>
+                      <KeyboardProvider>
+                        <RootLayoutNav />
+                      </KeyboardProvider>
+                    </GestureHandlerRootView>
+                  </FocusProvider>
+                </TasksProvider>
+              </BypassProvider>
+            </SetupGate>
           </SettingsProvider>
         </QueryClientProvider>
       </ErrorBoundary>

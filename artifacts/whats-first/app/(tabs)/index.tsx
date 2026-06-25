@@ -1,14 +1,13 @@
 // Main task list screen — grouped by date, filterable, paginated.
-// FIX 3: FilterBar is a sibling of SectionList (NOT inside ListHeaderComponent),
-// SectionList has flex:1 so ONLY it scrolls; header + filter bar stay pinned.
+// FIX 3: FilterBar is a sibling of SectionList (NOT inside ListHeaderComponent).
+// CHANGE 3: Surveillance banner removed — surveillance is always active.
 import React, { useMemo, useState } from 'react';
 import {
-  Platform, Pressable, SectionList, StyleSheet, Text, View,
+  Pressable, SectionList, StyleSheet, Text, View,
 } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useColors } from '@/hooks/useColors';
 import { useTasks } from '@/contexts/TasksContext';
-import { useSettings } from '@/contexts/SettingsContext';
 import { Task, FilterOption } from '@/types';
 import { ScreenHeader } from '@/components/ScreenHeader';
 import { FilterBar } from '@/components/FilterBar';
@@ -37,7 +36,6 @@ export default function TasksScreen() {
   const c = useColors();
   const insets = useSafeAreaInsets();
   const { tasks } = useTasks();
-  const { settings } = useSettings();
   const [filter, setFilter] = useState<FilterOption>('all');
   const [addVisible, setAddVisible] = useState(false);
   const [detailTask, setDetailTask] = useState<Task | null>(null);
@@ -45,7 +43,6 @@ export default function TasksScreen() {
 
   const today = todayISO();
 
-  // Filter active tasks
   const filtered = useMemo(() => {
     const active = tasks.filter((t) => t.status === 'active');
     switch (filter) {
@@ -57,7 +54,6 @@ export default function TasksScreen() {
     }
   }, [tasks, filter, today]);
 
-  // Sort: by dueDate ASC, within each date by urgency
   const sorted = useMemo(() =>
     [...filtered].sort((a, b) => {
       const dComp = a.dueDate.localeCompare(b.dueDate);
@@ -73,7 +69,6 @@ export default function TasksScreen() {
   const shownCount = paginated.length;
   const remaining = sorted.length - paginated.length;
 
-  // Group into sections by dueDate
   const sections = useMemo(() => {
     const map = new Map<string, Task[]>();
     for (const t of paginated) {
@@ -93,7 +88,6 @@ export default function TasksScreen() {
     setPage(1);
   }
 
-  // Tab bar ≈ 49pt + bottom inset; FAB floats above it
   const tabBarHeight = 49 + insets.bottom;
   const fabBottom = tabBarHeight + 12;
   const listBottomPad = tabBarHeight + 24;
@@ -101,45 +95,28 @@ export default function TasksScreen() {
   return (
     <View style={[styles.container, { backgroundColor: c.background }]}>
 
-      {/* 1. Safe-area-aware header — NEVER scrolls */}
+      {/* 1. Header — NEVER scrolls */}
       <ScreenHeader
         titleNode={<HomeTitle />}
         rightContent={<BypassButton />}
       />
 
-      {/* Focus mode status — auto-hides when surveillance is off */}
+      {/* 2. Focus status pill */}
       <FocusStatusPill />
 
-      {/* Surveillance off banner */}
-      {!settings.surveillanceEnabled && (
-        <View style={[styles.banner, { backgroundColor: '#F97316' }]}>
-          <Text style={styles.bannerText}>
-            Surveillance off — your apps are not being monitored.
-          </Text>
-        </View>
-      )}
-      {!settings.surveillanceEnabled && (
-        <View style={[styles.banner, { backgroundColor: '#F97316' }]}>
-          <Text style={styles.bannerText}>
-            Surveillance off — your apps are not being monitored.
-          </Text>
-        </View>
-      )}
-
-      {/* 3. Filter bar — NEVER scrolls, always pinned below header.
-              It is a SIBLING of SectionList, NOT inside ListHeaderComponent. */}
+      {/* 3. Filter bar — NEVER scrolls, always pinned below header */}
       <View style={[styles.filterBarWrapper, { backgroundColor: c.background, borderBottomColor: c.border }]}>
         <FilterBar active={filter} onChange={resetPagination} />
       </View>
 
-      {/* 4. Task count — pinned, never scrolls */}
+      {/* 4. Task count — pinned */}
       {totalCount > 0 && (
         <Text style={[styles.countLabel, { color: c.mutedForeground }]}>
           Showing {shownCount} of {totalCount} task{totalCount !== 1 ? 's' : ''}
         </Text>
       )}
 
-      {/* 5. SectionList — THIS IS THE ONLY THING THAT SCROLLS */}
+      {/* 5. SectionList — ONLY this scrolls */}
       <SectionList
         style={styles.list}
         sections={sections}
@@ -170,7 +147,7 @@ export default function TasksScreen() {
         showsVerticalScrollIndicator={false}
       />
 
-      {/* 6. FAB — floats above tab bar */}
+      {/* 6. FAB */}
       <Pressable
         style={[styles.fab, { backgroundColor: c.primary, bottom: fabBottom }]}
         onPress={() => setAddVisible(true)}
@@ -187,18 +164,11 @@ export default function TasksScreen() {
 const styles = StyleSheet.create({
   container: { flex: 1 },
   titleText: { fontSize: 22, fontFamily: 'Inter_700Bold' },
-  banner: { paddingHorizontal: 16, paddingVertical: 10 },
-  bannerText: { color: '#fff', fontSize: 13, fontFamily: 'Inter_500Medium', textAlign: 'center' },
-  // FIX 3: Pinned filter bar wrapper with solid bg + bottom border
-  filterBarWrapper: {
-    borderBottomWidth: 1,
-    zIndex: 10,
-  },
+  filterBarWrapper: { borderBottomWidth: 1, zIndex: 10 },
   countLabel: {
     fontSize: 12, fontFamily: 'Inter_400Regular',
     paddingHorizontal: 16, paddingVertical: 6,
   },
-  // FIX 3: flex:1 ensures ONLY the list scrolls
   list: { flex: 1 },
   sectionHeader: { paddingHorizontal: 16, paddingVertical: 8 },
   sectionTitle: { fontSize: 13, fontFamily: 'Inter_700Bold', textTransform: 'uppercase', letterSpacing: 0.8 },
@@ -208,18 +178,11 @@ const styles = StyleSheet.create({
   },
   loadMoreText: { fontSize: 14, fontFamily: 'Inter_600SemiBold' },
   fab: {
-    position: 'absolute',
-    right: 20,
-    width: 54,
-    height: 54,
-    borderRadius: 27,
-    alignItems: 'center',
-    justifyContent: 'center',
-    shadowColor: '#6366F1',
-    shadowOffset: { width: 0, height: 4 },
-    shadowOpacity: 0.4,
-    shadowRadius: 12,
-    elevation: 8,
+    position: 'absolute', right: 20,
+    width: 54, height: 54, borderRadius: 27,
+    alignItems: 'center', justifyContent: 'center',
+    shadowColor: '#6366F1', shadowOffset: { width: 0, height: 4 },
+    shadowOpacity: 0.4, shadowRadius: 12, elevation: 8,
   },
   fabIcon: { color: '#fff', fontSize: 28, lineHeight: 32, fontFamily: 'Inter_400Regular' },
 });

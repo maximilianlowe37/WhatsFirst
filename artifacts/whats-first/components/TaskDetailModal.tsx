@@ -1,6 +1,6 @@
 // Task detail modal — view/edit task, manage subtasks, delete.
-// FIX 1: Date picker collapsed by default — shows formatted pill, expands on tap.
-// FIX 2: Add-subtask input auto-focuses after each addition via ref + setTimeout.
+// CHANGE 2: Robust add-subtask auto-focus — useRef + useEffect pattern (50ms timeout).
+// FIX 1 (prev): Date picker collapsed by default — chip expands on tap.
 import React, { useEffect, useRef, useState } from 'react';
 import {
   KeyboardAvoidingView, Modal, Platform, Pressable, ScrollView,
@@ -26,7 +26,6 @@ const URGENCY_OPTIONS: { key: Urgency; label: string; color: string }[] = [
   { key: 'high', label: 'High', color: '#EF4444' },
 ];
 
-// FIX 1: Human-readable date label for the collapsed chip.
 function formatDueLabel(dateStr: string): string {
   const today = new Date();
   today.setHours(0, 0, 0, 0);
@@ -45,15 +44,26 @@ export function TaskDetailModal({ task, onClose }: Props) {
   const [urgency, setUrgency] = useState<Urgency>('medium');
   const [dueDate, setDueDate] = useState('');
   const [dateObj, setDateObj] = useState(new Date());
-  // FIX 1: date picker hidden by default
   const [showDatePicker, setShowDatePicker] = useState(false);
   const [subtaskInput, setSubtaskInput] = useState('');
   const [deleteConfirm, setDeleteConfirm] = useState(false);
-  // FIX 2: ref for auto-focus
-  const addSubtaskInputRef = useRef<TextInput>(null);
   const isIOS = Platform.OS === 'ios';
   const isAndroid = Platform.OS === 'android';
   const isWeb = Platform.OS === 'web';
+
+  // CHANGE 2: ref + state to guarantee focus after each subtask addition
+  const addSubtaskInputRef = useRef<TextInput>(null);
+  const [shouldFocusAdd, setShouldFocusAdd] = useState(false);
+
+  // CHANGE 2: useEffect watches shouldFocusAdd — 50ms ensures ref is mounted
+  useEffect(() => {
+    if (!shouldFocusAdd) return;
+    const t = setTimeout(() => {
+      addSubtaskInputRef.current?.focus();
+      setShouldFocusAdd(false);
+    }, 50);
+    return () => clearTimeout(t);
+  }, [shouldFocusAdd]);
 
   useEffect(() => {
     if (task) {
@@ -83,12 +93,12 @@ export function TaskDetailModal({ task, onClose }: Props) {
     onClose();
   }
 
-  // FIX 2: add subtask and auto-focus the input for the next one
+  // CHANGE 2: Add subtask and trigger focus via useEffect
   function handleAddSubtask() {
     if (!task || !subtaskInput.trim()) return;
     addSubtask(task.id, subtaskInput.trim());
     setSubtaskInput('');
-    setTimeout(() => addSubtaskInputRef.current?.focus(), 50);
+    setShouldFocusAdd(true);
   }
 
   function handleDateChange(_event: any, date?: Date) {
@@ -103,7 +113,11 @@ export function TaskDetailModal({ task, onClose }: Props) {
     <>
       <Modal visible={!!task} transparent animationType="slide" onRequestClose={onClose}>
         <Pressable style={styles.overlay} onPress={onClose}>
-          <KeyboardAvoidingView behavior={isIOS ? 'padding' : undefined} style={styles.kav}>
+          <KeyboardAvoidingView
+            behavior={isIOS ? 'padding' : 'height'}
+            style={{ flex: 1, justifyContent: 'flex-end' }}
+            keyboardVerticalOffset={0}
+          >
             <Pressable style={[styles.sheet, { backgroundColor: c.card, borderColor: c.border }]}>
               <View style={[styles.handle, { backgroundColor: c.border }]} />
               <View style={styles.header}>
@@ -131,10 +145,7 @@ export function TaskDetailModal({ task, onClose }: Props) {
                   {URGENCY_OPTIONS.map((opt) => (
                     <Pressable
                       key={opt.key}
-                      style={[
-                        styles.urgencyPill,
-                        { borderColor: opt.color, backgroundColor: urgency === opt.key ? opt.color : 'transparent' },
-                      ]}
+                      style={[styles.urgencyPill, { borderColor: opt.color, backgroundColor: urgency === opt.key ? opt.color : 'transparent' }]}
                       onPress={() => setUrgency(opt.key)}
                     >
                       <View style={[styles.dot, { backgroundColor: urgency === opt.key ? '#fff' : opt.color }]} />
@@ -145,16 +156,14 @@ export function TaskDetailModal({ task, onClose }: Props) {
                   ))}
                 </View>
 
-                {/* Due date — FIX 1 */}
+                {/* Due date — FIX 1 collapsed chip */}
                 <Text style={[styles.label, { color: c.mutedForeground }]}>Due date</Text>
                 <View style={styles.dateChipRow}>
                   <Pressable
                     style={[styles.dateChip, { backgroundColor: c.surface, borderColor: c.border }]}
                     onPress={() => setShowDatePicker((v) => !v)}
                   >
-                    <Text style={[styles.dateChipText, { color: c.foreground }]}>
-                      {formatDueLabel(dueDate)}
-                    </Text>
+                    <Text style={[styles.dateChipText, { color: c.foreground }]}>{formatDueLabel(dueDate)}</Text>
                     <Feather name={showDatePicker ? 'chevron-up' : 'chevron-down'} size={14} color={c.mutedForeground} />
                   </Pressable>
                   {showDatePicker && isIOS && (
@@ -163,36 +172,23 @@ export function TaskDetailModal({ task, onClose }: Props) {
                     </Pressable>
                   )}
                 </View>
-
                 {showDatePicker && (
                   <>
                     {isIOS && (
                       <DateTimePicker
-                        value={dateObj}
-                        mode="date"
-                        display="spinner"
-                        locale="en-GB"
-                        onChange={handleDateChange}
-                        style={styles.iosPicker}
-                        textColor="#ffffff"
-                        accentColor="#6366F1"
+                        value={dateObj} mode="date" display="spinner" locale="en-GB"
+                        onChange={handleDateChange} style={styles.iosPicker}
+                        textColor="#ffffff" accentColor="#6366F1"
                       />
                     )}
                     {isAndroid && (
-                      <DateTimePicker
-                        value={dateObj}
-                        mode="date"
-                        display="default"
-                        onChange={handleDateChange}
-                      />
+                      <DateTimePicker value={dateObj} mode="date" display="default" onChange={handleDateChange} />
                     )}
                     {isWeb && (
                       <TextInput
                         style={[styles.input, { backgroundColor: c.surface, color: c.foreground, borderColor: c.border }]}
-                        value={dueDate}
-                        onChangeText={setDueDate}
-                        placeholder="YYYY-MM-DD"
-                        placeholderTextColor={c.mutedForeground}
+                        value={dueDate} onChangeText={setDueDate}
+                        placeholder="YYYY-MM-DD" placeholderTextColor={c.mutedForeground}
                       />
                     )}
                   </>
@@ -208,13 +204,7 @@ export function TaskDetailModal({ task, onClose }: Props) {
                     >
                       {s.isCompleted && <Feather name="check" size={10} color={c.primary} />}
                     </Pressable>
-                    <Text
-                      style={[
-                        styles.subtaskText,
-                        { color: s.isCompleted ? c.mutedForeground : c.foreground },
-                        s.isCompleted && styles.strike,
-                      ]}
-                    >
+                    <Text style={[styles.subtaskText, { color: s.isCompleted ? c.mutedForeground : c.foreground }, s.isCompleted && styles.strike]}>
                       {s.title}
                     </Text>
                     <Pressable onPress={() => removeSubtask(task.id, s.id)}>
@@ -223,7 +213,7 @@ export function TaskDetailModal({ task, onClose }: Props) {
                   </View>
                 ))}
 
-                {/* FIX 2: ref on subtask add input, auto-focused after each addition */}
+                {/* CHANGE 2: ref on add-subtask input; re-focuses via useEffect after each add */}
                 <View style={styles.addSubtaskRow}>
                   <TextInput
                     ref={addSubtaskInputRef}
@@ -235,6 +225,7 @@ export function TaskDetailModal({ task, onClose }: Props) {
                     returnKeyType="done"
                     onSubmitEditing={handleAddSubtask}
                     blurOnSubmit={false}
+                    autoCorrect={false}
                   />
                   <Pressable style={[styles.addBtn, { backgroundColor: c.primary }]} onPress={handleAddSubtask}>
                     <Feather name="plus" size={16} color="#fff" />
@@ -281,7 +272,6 @@ export function TaskDetailModal({ task, onClose }: Props) {
 
 const styles = StyleSheet.create({
   overlay: { flex: 1, justifyContent: 'flex-end', backgroundColor: 'rgba(0,0,0,0.6)' },
-  kav: { justifyContent: 'flex-end' },
   sheet: {
     borderTopLeftRadius: 24, borderTopRightRadius: 24,
     borderWidth: 1, borderBottomWidth: 0,
@@ -290,47 +280,27 @@ const styles = StyleSheet.create({
   handle: { width: 36, height: 4, borderRadius: 2, alignSelf: 'center', marginBottom: 16 },
   header: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 16 },
   sheetTitle: { fontSize: 20, fontFamily: 'Inter_700Bold' },
-  label: {
-    fontSize: 12, fontFamily: 'Inter_600SemiBold',
-    textTransform: 'uppercase', letterSpacing: 0.8, marginBottom: 8, marginTop: 4,
-  },
+  label: { fontSize: 12, fontFamily: 'Inter_600SemiBold', textTransform: 'uppercase', letterSpacing: 0.8, marginBottom: 8, marginTop: 4 },
   input: { borderRadius: 10, borderWidth: 1, padding: 12, fontSize: 15, fontFamily: 'Inter_400Regular', marginBottom: 12 },
   urgencyRow: { flexDirection: 'row', gap: 8, marginBottom: 12 },
-  urgencyPill: {
-    flex: 1, flexDirection: 'row', alignItems: 'center', justifyContent: 'center',
-    gap: 6, paddingVertical: 9, borderRadius: 10, borderWidth: 1.5,
-  },
+  urgencyPill: { flex: 1, flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 6, paddingVertical: 9, borderRadius: 10, borderWidth: 1.5 },
   dot: { width: 7, height: 7, borderRadius: 4 },
   urgencyLabel: { fontSize: 13, fontFamily: 'Inter_600SemiBold' },
-  // FIX 1: date chip styles
   dateChipRow: { flexDirection: 'row', alignItems: 'center', gap: 10, marginBottom: 4 },
-  dateChip: {
-    flex: 1, flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between',
-    borderRadius: 10, borderWidth: 1, paddingHorizontal: 14, paddingVertical: 10,
-  },
+  dateChip: { flex: 1, flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', borderRadius: 10, borderWidth: 1, paddingHorizontal: 14, paddingVertical: 10 },
   dateChipText: { fontSize: 14, fontFamily: 'Inter_500Medium' },
   doneBtn: { paddingHorizontal: 4, paddingVertical: 8 },
   doneBtnText: { fontSize: 15, fontFamily: 'Inter_600SemiBold' },
   iosPicker: { height: 160, marginBottom: 8 },
-  subtaskRow: {
-    flexDirection: 'row', alignItems: 'center', gap: 8,
-    paddingVertical: 8, borderBottomWidth: 1,
-  },
+  subtaskRow: { flexDirection: 'row', alignItems: 'center', gap: 8, paddingVertical: 8, borderBottomWidth: 1 },
   checkbox: { width: 18, height: 18, borderRadius: 4, borderWidth: 1.5, alignItems: 'center', justifyContent: 'center' },
   subtaskText: { flex: 1, fontSize: 14, fontFamily: 'Inter_400Regular' },
   strike: { textDecorationLine: 'line-through' },
   addSubtaskRow: { flexDirection: 'row', gap: 8, marginTop: 8, marginBottom: 16 },
-  subtaskInput: {
-    flex: 1, borderRadius: 8, borderWidth: 1,
-    paddingHorizontal: 12, paddingVertical: 8,
-    fontSize: 14, fontFamily: 'Inter_400Regular',
-  },
+  subtaskInput: { flex: 1, borderRadius: 8, borderWidth: 1, paddingHorizontal: 12, paddingVertical: 8, fontSize: 14, fontFamily: 'Inter_400Regular' },
   addBtn: { width: 40, height: 40, borderRadius: 8, alignItems: 'center', justifyContent: 'center' },
   saveBtn: { borderRadius: 12, paddingVertical: 14, alignItems: 'center', marginBottom: 10 },
   saveBtnText: { fontSize: 16, fontFamily: 'Inter_700Bold' },
-  deleteBtn: {
-    borderRadius: 12, paddingVertical: 12, alignItems: 'center',
-    flexDirection: 'row', justifyContent: 'center', gap: 6, borderWidth: 1.5,
-  },
+  deleteBtn: { borderRadius: 12, paddingVertical: 12, alignItems: 'center', flexDirection: 'row', justifyContent: 'center', gap: 6, borderWidth: 1.5 },
   deleteBtnText: { fontSize: 15, fontFamily: 'Inter_600SemiBold' },
 });

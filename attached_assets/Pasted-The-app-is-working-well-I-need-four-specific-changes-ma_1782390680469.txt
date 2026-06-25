@@ -1,0 +1,416 @@
+The app is working well. I need four specific changes made. 
+Do NOT rebuild from scratch — edit existing files only. 
+Read each relevant file before touching it.
+
+---
+
+## CHANGE 1: Lock the entire Settings tab — only editable 
+## on the 1st of each month or during first-time setup
+
+**When settings ARE editable:**
+- On first install (no stored config exists yet / 
+  hasCompletedSetup is false).
+- On the 1st day of any calendar month 
+  (new Date().getDate() === 1).
+
+**When settings are LOCKED (all other days):**
+- Render the entire Settings screen in a locked state.
+- Display all current values so the user can read them.
+- Overlay or replace the interactive controls with 
+  read-only versions:
+    - Sliders become non-interactive (disabled).
+    - [−] / [+] buttons have opacity: 0.35 and 
+      onPress={undefined} so they cannot be tapped.
+    - Switches/Toggles are non-interactive 
+      (pointerEvents="none" on their container).
+    - App chips show but the "Add" and "✕" buttons 
+      are hidden or opacity: 0.35.
+- Show a prominent lock banner at the TOP of the 
+  Settings screen, above all sections:
+
+    <View style={styles.lockBanner}>
+      <Ionicons name="lock-closed" size={18} 
+        color="#F97316" />
+      <View style={{ flex: 1, marginLeft: 10 }}>
+        <Text style={styles.lockTitle}>
+          Settings are locked
+        </Text>
+        <Text style={styles.lockSubtitle}>
+          Settings can only be changed on the 
+          1st of each month or when you first 
+          set up the app.
+        </Text>
+        <Text style={styles.lockSubtitle}>
+          Come back on the 1st to make changes.
+        </Text>
+      </View>
+    </View>
+
+  lockBanner styles:
+    flexDirection: 'row',
+    alignItems: 'flex-start',
+    backgroundColor: '#1A1A1A',
+    borderWidth: 1,
+    borderColor: '#F97316',
+    borderRadius: 12,
+    padding: 14,
+    marginHorizontal: 16,
+    marginTop: 12,
+    marginBottom: 8,
+
+  lockTitle: bold white, fontSize 14
+  lockSubtitle: #9CA3AF, fontSize 13, marginTop 4
+
+**First-time setup:**
+- If @whats_first_settings does not yet exist in 
+  AsyncStorage (truly first launch), show a 
+  mandatory setup screen BEFORE the main app renders.
+- The setup screen must let the user configure ALL 
+  settings (not just passes) — same UI as the 
+  Settings tab but with a "Get started" confirm 
+  button at the bottom.
+- Title of the setup screen: "Set up What's first?"
+- Subtitle: "Configure your preferences. You can 
+  only change these on the 1st of each month."
+- A "Get started" button saves all values to 
+  AsyncStorage, sets hasCompletedSetup: true, 
+  and navigates to the main app.
+- The user cannot reach the main app without 
+  completing this step.
+
+**Persistence logic:**
+Add two fields to @whats_first_settings:
+  `settingsLockedMonth: number`   // month index 0–11
+  `settingsLockedYear: number`    // full year e.g. 2025
+
+When the user saves settings (during an unlocked 
+window — i.e. first setup OR on the 1st), 
+update both fields to the current month and year.
+
+On every app launch and every time the Settings 
+tab becomes active, run this check:
+
+  function isSettingsUnlocked(settings) {
+    const now = new Date();
+    const isFirstOfMonth = now.getDate() === 1;
+    const isFirstLaunch = !settings.hasCompletedSetup;
+    return isFirstLaunch || isFirstOfMonth;
+  }
+
+If isSettingsUnlocked returns true → render fully 
+interactive Settings with a "Save settings" button 
+at the bottom. Pressing Save commits all values 
+to AsyncStorage and updates settingsLockedMonth 
+and settingsLockedYear to the current month/year.
+
+If isSettingsUnlocked returns false → render the 
+locked read-only version with the lock banner.
+
+This lock must survive app restarts, updates, and 
+device reboots because the lock state is derived 
+entirely from the calendar date and AsyncStorage 
+— no in-memory flags.
+
+**One edge case to handle:**
+If today IS the 1st but the user already saved 
+settings earlier today (settingsLockedMonth and 
+settingsLockedYear match current month and year), 
+keep the settings UNLOCKED for the entire day — 
+the user should be able to edit multiple times 
+on the 1st if they want. Only lock after the 
+date changes to the 2nd.
+So the unlock condition is:
+  isFirstOfMonth === true  →  always unlocked 
+  regardless of when they last saved.
+
+---
+
+## CHANGE 2: Subtask auto-focus — guaranteed keyboard open
+
+The previous fix attempted this but it is not working 
+reliably. Re-implement it with a more robust approach.
+
+In both AddTaskModal and TaskDetailModal/Screen:
+
+**The guaranteed pattern to use:**
+
+  // 1. Keep a ref map for all subtask inputs
+  const inputRefs = useRef<Record<string, TextInput | null>>({});
+  
+  // 2. Keep track of the ID of the most recently added subtask
+  const [focusedSubtaskId, setFocusedSubtaskId] = useState
+    string | null>(null);
+
+  // 3. When adding a new subtask:
+  function handleAddSubtask() {
+    const newId = uid();
+    setSubtasks(prev => [
+      ...prev, 
+      { id: newId, title: '', isCompleted: false }
+    ]);
+    setFocusedSubtaskId(newId);
+  }
+
+  // 4. useEffect watching focusedSubtaskId:
+  useEffect(() => {
+    if (!focusedSubtaskId) return;
+    // Two-stage timeout: 50ms for the ref to mount, 
+    // then focus. If 50ms isn't enough on a slow 
+    // device, try 100ms as the fallback.
+    const t = setTimeout(() => {
+      const ref = inputRefs.current[focusedSubtaskId];
+      if (ref) {
+        ref.focus();
+        setFocusedSubtaskId(null);
+      }
+    }, 50);
+    return () => clearTimeout(t);
+  }, [focusedSubtaskId]);
+
+  // 5. Each subtask TextInput:
+  <TextInput
+    ref={el => { inputRefs.current[subtask.id] = el; }}
+    value={subtask.title}
+    onChangeText={...}
+    blurOnSubmit={false}
+    returnKeyType="done"
+    onSubmitEditing={handleAddSubtask}
+    placeholder="Subtask title"
+    placeholderTextColor="#9CA3AF"
+    autoCorrect={false}
+    // Do NOT use autoFocus prop — we control focus 
+    // manually via the ref to avoid race conditions
+  />
+
+**Scroll to keep focused field visible:**
+Wrap the subtask list section in a ScrollView 
+(if not already). After focusing, call 
+`scrollViewRef.current?.scrollToEnd({ animated: true })` 
+so the new field is always visible above the keyboard.
+
+**KeyboardAvoidingView:**
+The modal's root must be:
+  <KeyboardAvoidingView 
+    behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
+    style={{ flex: 1 }}
+    keyboardVerticalOffset={0}
+  >
+
+This must be applied in BOTH AddTaskModal and 
+TaskDetailModal. Verify it is present and not 
+accidentally removed in a previous edit.
+
+---
+
+## CHANGE 3: Remove surveillance toggle and max-disables 
+## setting entirely
+
+From SettingsScreen, permanently remove:
+- The "Enable surveillance" Switch/Toggle row.
+- The "Max disables per month" [−]/[+] counter row.
+- Any section header that becomes empty after removal.
+
+Replace with a single static informational row:
+
+  <View style={styles.infoRow}>
+    <View style={styles.infoIconContainer}>
+      <Ionicons name="shield-checkmark" size={20} 
+        color="#22C55E" />
+    </View>
+    <View style={{ flex: 1 }}>
+      <Text style={styles.infoTitle}>
+        Surveillance active
+      </Text>
+      <Text style={styles.infoSubtitle}>
+        Managed automatically by What's first?
+      </Text>
+    </View>
+  </View>
+
+**Clean up all related logic:**
+- In useSettings.js (or SettingsContext), remove 
+  `surveillanceEnabled`, `maxSurveillanceDisablesPerMonth` 
+  from the settings object and their default values.
+- In @whats_first_settings AsyncStorage, these keys 
+  can remain stored without causing errors (just stop 
+  reading/writing them going forward).
+- Search the entire codebase for any references to 
+  `surveillanceEnabled` and `disabledThisMonth`. 
+  For each reference found:
+    - If it controls a UI banner ("Surveillance is off"), 
+      remove that banner entirely.
+    - If it gates any logic, replace the condition 
+      with `true` (surveillance is always on).
+    - If it is in a type definition, remove the field.
+- Do not leave any dead code, unused imports, 
+  or empty style blocks behind.
+- After removal, the Settings screen sections must 
+  flow naturally with no blank gaps.
+
+---
+
+## CHANGE 4: Draggable bottom sheet handle on Add Task modal
+
+The drag handle at the top of the Add Task modal 
+is currently a static visual element. Make it 
+functional using react-native-reanimated and 
+react-native-gesture-handler (both already installed).
+
+**Two snap points:**
+  HALF = screenHeight * 0.55   // default starting position
+  FULL = screenHeight * 0.92   // expanded full screen
+
+**Implementation using Reanimated 2:**
+
+  import { useSharedValue, useAnimatedStyle, 
+           withSpring, runOnJS } from 
+           'react-native-reanimated';
+  import { PanGestureHandler } from 
+           'react-native-gesture-handler';
+  import Animated from 'react-native-reanimated';
+
+  const screenHeight = Dimensions.get('window').height;
+  const HALF = screenHeight * 0.55;
+  const FULL = screenHeight * 0.92;
+
+  // translateY: 0 = FULL height, positive = shorter
+  // Starting position: sheet shows at HALF height
+  const translateY = useSharedValue(screenHeight - HALF);
+
+  const animatedStyle = useAnimatedStyle(() => ({
+    transform: [{ translateY: translateY.value }],
+  }));
+
+  const gestureHandler = useAnimatedGestureHandler({
+    onStart: (_, ctx) => {
+      ctx.startY = translateY.value;
+    },
+    onActive: (event, ctx) => {
+      // Follow finger but clamp within valid range
+      const newY = ctx.startY + event.translationY;
+      translateY.value = Math.max(
+        screenHeight - FULL, 
+        Math.min(screenHeight - HALF * 0.7, newY)
+      );
+    },
+    onEnd: (event) => {
+      // Snap to nearest point based on velocity + position
+      const midPoint = screenHeight - 
+        ((FULL - HALF) / 2 + HALF);
+      
+      if (event.velocityY < -500 || 
+          translateY.value < midPoint) {
+        // Snap to FULL
+        translateY.value = withSpring(
+          screenHeight - FULL, 
+          { damping: 20, stiffness: 200 }
+        );
+      } else if (event.velocityY > 1000) {
+        // Fast downward swipe — dismiss the modal
+        translateY.value = withSpring(
+          screenHeight, 
+          { damping: 20, stiffness: 200 },
+          () => runOnJS(onClose)()
+        );
+      } else {
+        // Snap back to HALF
+        translateY.value = withSpring(
+          screenHeight - HALF, 
+          { damping: 20, stiffness: 200 }
+        );
+      }
+    },
+  });
+
+**Sheet structure:**
+
+  // The modal backdrop (full screen, tap to close):
+  <TouchableWithoutFeedback onPress={onClose}>
+    <View style={StyleSheet.absoluteFill} />
+  </TouchableWithoutFeedback>
+
+  // The animated sheet panel:
+  <Animated.View style={[styles.sheet, animatedStyle]}>
+    
+    {/* Drag handle area — this is what the user grabs */}
+    <PanGestureHandler onGestureEvent={gestureHandler}>
+      <Animated.View style={styles.handleArea}>
+        <View style={styles.handle} />
+        {/* handle = 36×4 rounded pill, color #555 */}
+      </Animated.View>
+    </PanGestureHandler>
+
+    {/* The form content inside a ScrollView */}
+    <ScrollView 
+      style={{ flex: 1 }}
+      keyboardShouldPersistTaps="handled"
+    >
+      {/* Title input, urgency pills, date chip, 
+          subtasks, Add Task button */}
+    </ScrollView>
+
+  </Animated.View>
+
+**Sheet styles:**
+  sheet: {
+    position: 'absolute',
+    left: 0,
+    right: 0,
+    bottom: 0,
+    height: FULL,  // always FULL height in the DOM
+    // The translateY controls how much is visible
+    backgroundColor: '#1A1A1A',
+    borderTopLeftRadius: 20,
+    borderTopRightRadius: 20,
+    overflow: 'hidden',
+  },
+  handleArea: {
+    width: '100%',
+    paddingVertical: 12,
+    alignItems: 'center',
+    // Make the tap/drag target generously tall
+    minHeight: 44,
+  },
+  handle: {
+    width: 36,
+    height: 4,
+    borderRadius: 2,
+    backgroundColor: '#555555',
+  },
+
+**Gesture conflict with scrolling:**
+The PanGestureHandler wraps ONLY the handleArea View 
+at the top, NOT the ScrollView. This ensures the 
+drag gesture is isolated to the handle strip and 
+never interferes with scrolling through the form.
+
+**Safe area:**
+When snapped to FULL, the sheet top must clear 
+the Dynamic Island/notch. Add paddingTop: insets.top 
+to the sheet's top content OR ensure the sheet's 
+maximum height (FULL = 92% of screen) naturally 
+leaves enough room at the top.
+
+**Initialise sheet position on open:**
+When the modal opens (becomes visible), reset 
+translateY to `screenHeight - HALF` with no 
+animation so it starts at half height every time.
+
+  useEffect(() => {
+    if (visible) {
+      translateY.value = screenHeight - HALF;
+    }
+  }, [visible]);
+
+---
+
+## CONSTRAINTS FOR ALL CHANGES
+- Read each file before editing it.
+- Do not touch notification logic, task CRUD logic, 
+  urgency colors, filter logic, or history logic.
+- Do not install any new packages — everything needed 
+  is already installed.
+- After all changes, the app must bundle with zero 
+  errors in Metro.
+- Validate mentally for iPhone SE (375pt), 
+  iPhone 14 Pro (393pt), iPhone 15 Pro Max (430pt).

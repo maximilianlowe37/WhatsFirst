@@ -109,7 +109,6 @@ export function FocusProvider({ children }: { children: React.ReactNode }) {
     settings.focusNagMinutes,
     settings.focusNagMessage,
     settings.notificationsEnabled,
-    settings.surveillanceEnabled,
     settings.lowNagLimit,
     tasks,
     isHydrated,
