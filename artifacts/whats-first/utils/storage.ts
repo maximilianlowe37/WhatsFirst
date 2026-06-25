@@ -29,4 +29,8 @@ export const STORAGE_KEYS = {
   SETTINGS: 'wf_settings',
   SURVEILLANCE_USAGE: 'wf_surveillance_usage',
   PUSH_TOKEN: 'wf_push_token',
+  FOCUS_NAG_ID: 'wf_focus_nag_id',
+  FOCUS_SUPPRESSED_UNTIL: 'wf_focus_suppressed_until',
+  FOCUS_FILTER_PAYLOAD: 'wf_focus_filter_payload',
+  NATIVE_BLOCKED_TOKENS: 'wf_native_blocked_tokens',
 } as const;

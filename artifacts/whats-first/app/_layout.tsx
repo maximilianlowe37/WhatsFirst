@@ -21,6 +21,7 @@ import { ErrorBoundary } from "@/components/ErrorBoundary";
 import { SettingsProvider } from "@/contexts/SettingsContext";
 import { BypassProvider } from "@/contexts/BypassContext";
 import { TasksProvider } from "@/contexts/TasksContext";
+import { FocusProvider } from "@/contexts/FocusContext";
 import { registerForPushNotifications } from "@/utils/notifications";
 
 SplashScreen.preventAutoHideAsync();
@@ -37,10 +38,17 @@ function RootLayoutNav() {
   useEffect(() => {
     const subscription = Notifications.addNotificationResponseReceivedListener(
       (response) => {
-        const taskId = response.notification.request.content.data?.taskId as string | undefined;
+        const data = (response.notification.request.content.data ?? {}) as {
+          taskId?: string;
+          kind?: string;
+        };
+        // Focus-nag taps: just log for now (deep linking can be added later).
+        if (data.kind === "focus_nag") {
+          console.log("[Notifications] User tapped focus nag");
+          return;
+        }
+        const taskId = data.taskId;
         if (taskId) {
-          // Task detail navigation can be wired here when needed.
-          // The taskId is available for deep linking.
           console.log("[Notifications] User tapped notification for task:", taskId);
         }
       }
@@ -79,11 +87,14 @@ export default function RootLayout() {
           <SettingsProvider>
             <BypassProvider>
               <TasksProvider>
-                <GestureHandlerRootView>
-                  <KeyboardProvider>
-                    <RootLayoutNav />
-                  </KeyboardProvider>
-                </GestureHandlerRootView>
+                {/* FocusProvider depends on Settings + Tasks to decide nag state */}
+                <FocusProvider>
+                  <GestureHandlerRootView>
+                    <KeyboardProvider>
+                      <RootLayoutNav />
+                    </KeyboardProvider>
+                  </GestureHandlerRootView>
+                </FocusProvider>
               </TasksProvider>
             </BypassProvider>
           </SettingsProvider>

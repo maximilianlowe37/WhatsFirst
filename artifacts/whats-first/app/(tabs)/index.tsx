@@ -17,6 +17,7 @@ import { AddTaskModal } from '@/components/AddTaskModal';
 import { TaskDetailModal } from '@/components/TaskDetailModal';
 import { EmptyState } from '@/components/EmptyState';
 import { BypassButton } from '@/components/BypassButton';
+import { FocusStatusPill } from '@/components/FocusStatusPill';
 import { todayISO, withinDays, formatDayLabel } from '@/utils/dateHelpers';
 
 const URGENCY_ORDER = { high: 0, medium: 1, low: 2 };
@@ -106,7 +107,17 @@ export default function TasksScreen() {
         rightContent={<BypassButton />}
       />
 
-      {/* 2. Surveillance off banner — NEVER scrolls */}
+      {/* Focus mode status — auto-hides when surveillance is off */}
+      <FocusStatusPill />
+
+      {/* Surveillance off banner */}
+      {!settings.surveillanceEnabled && (
+        <View style={[styles.banner, { backgroundColor: '#F97316' }]}>
+          <Text style={styles.bannerText}>
+            Surveillance off — your apps are not being monitored.
+          </Text>
+        </View>
+      )}
       {!settings.surveillanceEnabled && (
         <View style={[styles.banner, { backgroundColor: '#F97316' }]}>
           <Text style={styles.bannerText}>

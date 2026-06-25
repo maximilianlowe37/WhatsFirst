@@ -1,0 +1,15 @@
+{
+  "name": "expo-family-controls",
+  "version": "0.1.0",
+  "description": "Local Expo module wrapping Apple's FamilyControls / ManagedSettings APIs for app blocking.",
+  "main": "src/index.ts",
+  "types": "src/index.ts",
+  "private": true,
+  "scripts": {
+    "build": "echo 'expo-family-controls is consumed as a local module — no build step needed'"
+  },
+  "peerDependencies": {
+    "expo": "*",
+    "expo-modules-core": "*"
+  }
+}

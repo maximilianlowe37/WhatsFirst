@@ -1,10 +1,12 @@
 // Tasks context — manages all task CRUD and subtask operations with AsyncStorage persistence.
 // Schedules/cancels push notifications on task lifecycle events.
 import React, { createContext, useCallback, useContext, useEffect, useState } from 'react';
+import { Platform } from 'react-native';
 import { Task, Subtask, Urgency, TaskStatus } from '@/types';
 import { getItem, setItem, STORAGE_KEYS } from '@/utils/storage';
 import { todayISO } from '@/utils/dateHelpers';
 import { scheduleTaskReminder, cancelTaskReminder } from '@/utils/notifications';
+import { writeFocusFilterPayload } from '@/utils/focusFilter';
 import { useSettings } from '@/contexts/SettingsContext';
 
 function genId(): string {
@@ -38,6 +40,14 @@ export function TasksProvider({ children }: { children: React.ReactNode }) {
       setIsLoaded(true);
     });
   }, []);
+
+  // Mirror tasks to the iOS Focus Filter payload so the (future) Intents
+  // Extension can read the freshest top task from the App Group container.
+  // On Android / web this still writes to AsyncStorage — harmless.
+  useEffect(() => {
+    if (Platform.OS !== 'ios') return;
+    writeFocusFilterPayload(tasks, settings.surveillanceEnabled).catch(() => {});
+  }, [tasks, settings.surveillanceEnabled]);
 
   const addTask = useCallback(async (data: { title: string; urgency: Urgency; dueDate: string; subtasks: string[] }) => {
     const newTask: Task = {
